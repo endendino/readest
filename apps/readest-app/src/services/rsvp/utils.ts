@@ -373,3 +373,16 @@ export function splitTextIntoWords(text: string, language?: string, cjkCharMode 
 
   return words.filter((w) => w.trim().length > 0);
 }
+
+/**
+ * Relative weight of a word's trailing punctuation, used to scale the configured
+ * punctuation pause. Sentence-ending punctuation (".", "!", "?") gets the full
+ * pause; clause-level punctuation (",", ";", ":", "–", "—") gets a shorter beat;
+ * a word with no trailing pause punctuation gets 0. This lets a comma breathe
+ * less than a full stop instead of every mark sharing one fixed pause.
+ */
+export function punctuationPauseScale(text: string): number {
+  if (/[.!?]$/.test(text)) return 1;
+  if (/[,;:–—]$/.test(text)) return 0.5;
+  return 0;
+}
