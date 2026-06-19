@@ -1286,6 +1286,18 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               />
             </div>
 
+            {/* Warm-up ramp — ease speed up over the first words after start */}
+            <div className='config-item gap-2'>
+              <span className='opacity-50'>{_('Warm-up')}</span>
+              <input
+                type='checkbox'
+                data-testid='rsvp-warmup-toggle'
+                className='toggle'
+                checked={state.warmupRamp}
+                onChange={(e) => controller.setWarmupRamp(e.target.checked)}
+              />
+            </div>
+
             {/* CJK character mode — split CJK text per-character */}
             {state.hasCJK && (
               <div className='config-item gap-2'>

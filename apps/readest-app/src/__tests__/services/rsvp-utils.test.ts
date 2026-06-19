@@ -11,6 +11,7 @@ import {
   punctuationPauseScale,
   chunkWordCount,
   joinChunkText,
+  warmupWpm,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
@@ -61,6 +62,30 @@ describe('rsvp/utils', () => {
 
     test('returns a single word unchanged', () => {
       expect(joinChunkText(['hello'])).toBe('hello');
+    });
+  });
+
+  describe('warmupWpm', () => {
+    test('starts at the start fraction of the target', () => {
+      expect(warmupWpm(300, 0, 8, 0.5)).toBe(150);
+    });
+
+    test('reaches the full target at the end of the ramp', () => {
+      expect(warmupWpm(300, 8, 8, 0.5)).toBe(300);
+      expect(warmupWpm(300, 20, 8, 0.5)).toBe(300);
+    });
+
+    test('eases monotonically up across the ramp', () => {
+      const a = warmupWpm(300, 2, 8, 0.5);
+      const b = warmupWpm(300, 4, 8, 0.5);
+      const c = warmupWpm(300, 6, 8, 0.5);
+      expect(a).toBeLessThan(b);
+      expect(b).toBeLessThan(c);
+      expect(c).toBeLessThan(300);
+    });
+
+    test('returns the target unchanged when the ramp is disabled', () => {
+      expect(warmupWpm(300, 0, 0, 0.5)).toBe(300);
     });
   });
 

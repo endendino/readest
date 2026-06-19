@@ -424,3 +424,22 @@ export function joinChunkText(words: string[]): string {
   }
   return result;
 }
+
+/**
+ * Effective WPM for a warm-up ramp: eases from `startFraction` of the target
+ * speed up to the full target over the first `rampWords` words, then stays at
+ * the target. `wordsIntoRamp` is how many words have been shown since the ramp
+ * anchor (start/resume). Returns the target unchanged once the ramp is over or
+ * when `rampWords` is non-positive.
+ */
+export function warmupWpm(
+  targetWpm: number,
+  wordsIntoRamp: number,
+  rampWords: number,
+  startFraction: number,
+): number {
+  if (rampWords <= 0 || wordsIntoRamp >= rampWords) return targetWpm;
+  const progress = Math.max(0, wordsIntoRamp) / rampWords;
+  const fraction = startFraction + (1 - startFraction) * progress;
+  return Math.round(targetWpm * fraction);
+}

@@ -8,6 +8,7 @@ import {
   punctuationPauseScale,
   chunkWordCount,
   joinChunkText,
+  warmupWpm,
 } from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
@@ -23,6 +24,11 @@ const DEFAULT_SPLIT_HYPHENS = false;
 const DEFAULT_CJK_CHAR_MODE = false;
 const DEFAULT_WORDS_PER_FLASH = 1;
 const WORDS_PER_FLASH_OPTIONS = [1, 2, 3];
+const DEFAULT_WARMUP_RAMP = false;
+// Warm-up ramp: ease from half the target speed up to full over the first words
+// after each start/resume.
+const WARMUP_RAMP_WORDS = 8;
+const WARMUP_RAMP_START_FRACTION = 0.5;
 const DEFAULT_START_DELAY_SECONDS = 3;
 const START_DELAY_OPTIONS = [0, 1, 2, 3];
 
@@ -45,6 +51,7 @@ const POSITION_KEY_PREFIX = 'readest_rsvp_pos_';
 const SPLIT_HYPHENS_KEY = 'readest_rsvp_split_hyphens';
 const CJK_CHAR_MODE_KEY = 'readest_rsvp_cjk_char_mode';
 const WORDS_PER_FLASH_KEY = 'readest_rsvp_words_per_flash';
+const WARMUP_RAMP_KEY = 'readest_rsvp_warmup_ramp';
 const START_DELAY_KEY = 'readest_rsvp_start_delay';
 
 // Section-only CFI (no '!') sorts before any word CFI in that section.
@@ -67,6 +74,7 @@ export class RSVPController extends EventTarget {
     splitHyphens: DEFAULT_SPLIT_HYPHENS,
     cjkCharMode: DEFAULT_CJK_CHAR_MODE,
     wordsPerFlash: DEFAULT_WORDS_PER_FLASH,
+    warmupRamp: DEFAULT_WARMUP_RAMP,
     startDelaySeconds: DEFAULT_START_DELAY_SECONDS,
     hasCJK: false,
     progress: 0,
@@ -77,6 +85,9 @@ export class RSVPController extends EventTarget {
   private pendingStartWordIndex: number | null = null;
   private countdown: number | null = null;
   private cachedWords: { docIndex: number; doc: Document; words: RsvpWord[] } | null = null;
+  // Word index where the current play/resume began; the warm-up ramp eases the
+  // effective WPM up over the first WARMUP_RAMP_WORDS words from here. -1 = unset.
+  #rampAnchorIndex = -1;
 
   // Slice 3a (#3235): externally-driven sync (e.g. TTS drives RSVP word display).
   // #lastSyncIndex is a monotonic cursor so forward word-by-word sync scans from
@@ -131,6 +142,10 @@ export class RSVPController extends EventTarget {
     const savedWordsPerFlash = this.loadWordsPerFlashFromStorage();
     if (savedWordsPerFlash !== null) {
       this.state.wordsPerFlash = savedWordsPerFlash;
+    }
+    const savedWarmupRamp = this.loadWarmupRampFromStorage();
+    if (savedWarmupRamp !== null) {
+      this.state.warmupRamp = savedWarmupRamp;
     }
     const savedStartDelay = this.loadStartDelayFromStorage();
     if (savedStartDelay !== null) {
@@ -305,6 +320,26 @@ export class RSVPController extends EventTarget {
         const parsed = parseInt(stored, 10);
         if (WORDS_PER_FLASH_OPTIONS.includes(parsed)) return parsed;
       }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  setWarmupRamp(value: boolean): void {
+    this.state.warmupRamp = value;
+    try {
+      localStorage.setItem(WARMUP_RAMP_KEY, value ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadWarmupRampFromStorage(): boolean | null {
+    try {
+      const stored = localStorage.getItem(WARMUP_RAMP_KEY);
+      if (stored !== null) return stored === '1';
     } catch {
       /* ignore */
     }
@@ -571,6 +606,7 @@ export class RSVPController extends EventTarget {
       currentIndex: clampedStart,
       hasCJK: this.computeHasCJK(words),
     };
+    this.#rampAnchorIndex = clampedStart;
     this.emitStateChange();
 
     this.startCountdown(() => {
@@ -588,6 +624,8 @@ export class RSVPController extends EventTarget {
   resume(): void {
     if (!this.state.active) return;
     this.state.playing = true;
+    // Re-anchor so the warm-up ramp eases back in from the resume point.
+    this.#rampAnchorIndex = this.state.currentIndex;
     this.emitStateChange();
     this.startCountdown(() => {
       this.scheduleNextWord();
@@ -1188,6 +1226,14 @@ export class RSVPController extends EventTarget {
     return words.some((word) => containsCJK(word.text));
   }
 
+  // Effective WPM for the next word: applies the warm-up ramp (when enabled)
+  // from the anchor set at the last start/resume, otherwise the configured WPM.
+  private effectiveWpm(): number {
+    if (!this.state.warmupRamp || this.#rampAnchorIndex < 0) return this.state.wpm;
+    const wordsIntoRamp = this.state.currentIndex - this.#rampAnchorIndex;
+    return warmupWpm(this.state.wpm, wordsIntoRamp, WARMUP_RAMP_WORDS, WARMUP_RAMP_START_FRACTION);
+  }
+
   private scheduleNextWord(): void {
     this.clearTimer();
 
@@ -1203,7 +1249,7 @@ export class RSVPController extends EventTarget {
     }
 
     const displayWord = this.currentDisplayWord!;
-    const duration = this.getWordDisplayDuration(displayWord, this.state.wpm);
+    const duration = this.getWordDisplayDuration(displayWord, this.effectiveWpm());
 
     this.playbackTimer = setTimeout(() => {
       this.advanceToNextWord();
