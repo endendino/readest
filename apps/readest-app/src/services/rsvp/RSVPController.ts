@@ -6,6 +6,8 @@ import {
   splitTextIntoWords,
   getHyphenParts,
   punctuationPauseScale,
+  chunkWordCount,
+  joinChunkText,
 } from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
@@ -19,6 +21,8 @@ const DEFAULT_PUNCTUATION_PAUSE_MS = 100;
 const PUNCTUATION_PAUSE_OPTIONS = [25, 50, 75, 100, 125, 150, 175, 200];
 const DEFAULT_SPLIT_HYPHENS = false;
 const DEFAULT_CJK_CHAR_MODE = false;
+const DEFAULT_WORDS_PER_FLASH = 1;
+const WORDS_PER_FLASH_OPTIONS = [1, 2, 3];
 const DEFAULT_START_DELAY_SECONDS = 3;
 const START_DELAY_OPTIONS = [0, 1, 2, 3];
 
@@ -40,6 +44,7 @@ const PUNCTUATION_PAUSE_KEY_PREFIX = 'readest_rsvp_pause_';
 const POSITION_KEY_PREFIX = 'readest_rsvp_pos_';
 const SPLIT_HYPHENS_KEY = 'readest_rsvp_split_hyphens';
 const CJK_CHAR_MODE_KEY = 'readest_rsvp_cjk_char_mode';
+const WORDS_PER_FLASH_KEY = 'readest_rsvp_words_per_flash';
 const START_DELAY_KEY = 'readest_rsvp_start_delay';
 
 // Section-only CFI (no '!') sorts before any word CFI in that section.
@@ -61,6 +66,7 @@ export class RSVPController extends EventTarget {
     punctuationPauseMs: DEFAULT_PUNCTUATION_PAUSE_MS,
     splitHyphens: DEFAULT_SPLIT_HYPHENS,
     cjkCharMode: DEFAULT_CJK_CHAR_MODE,
+    wordsPerFlash: DEFAULT_WORDS_PER_FLASH,
     startDelaySeconds: DEFAULT_START_DELAY_SECONDS,
     hasCJK: false,
     progress: 0,
@@ -122,6 +128,10 @@ export class RSVPController extends EventTarget {
     if (savedCjkCharMode !== null) {
       this.state.cjkCharMode = savedCjkCharMode;
     }
+    const savedWordsPerFlash = this.loadWordsPerFlashFromStorage();
+    if (savedWordsPerFlash !== null) {
+      this.state.wordsPerFlash = savedWordsPerFlash;
+    }
     const savedStartDelay = this.loadStartDelayFromStorage();
     if (savedStartDelay !== null) {
       this.state.startDelaySeconds = savedStartDelay;
@@ -143,9 +153,44 @@ export class RSVPController extends EventTarget {
     return null;
   }
 
+  // Multi-word grouping is disabled while an external driver (TTS sync) owns
+  // advancement, since that path is inherently word-by-word.
+  private get effectiveWordsPerFlash(): number {
+    return this.#externallyDriven ? 1 : this.state.wordsPerFlash;
+  }
+
+  // How many words the flash starting at the current index covers: up to
+  // effectiveWordsPerFlash, never spanning a sentence boundary.
+  private currentChunkSize(): number {
+    const max = this.effectiveWordsPerFlash;
+    if (max <= 1) return 1;
+    const texts = this.state.words
+      .slice(this.state.currentIndex, this.state.currentIndex + max)
+      .map((w) => w.text);
+    return Math.max(1, chunkWordCount(texts, max));
+  }
+
   get currentDisplayWord(): RsvpWord | null {
     const word = this.currentWord;
     if (!word) return null;
+
+    const chunkSize = this.currentChunkSize();
+    if (chunkSize > 1) {
+      const slice = this.state.words.slice(
+        this.state.currentIndex,
+        this.state.currentIndex + chunkSize,
+      );
+      const text = joinChunkText(slice.map((w) => w.text));
+      // Keep the first word's range/cfi (position + TTS anchor stay valid) and
+      // sum the per-word pause multipliers so the group is held for ~N words.
+      return {
+        ...word,
+        text,
+        orpIndex: this.calculateORP(text),
+        pauseMultiplier: slice.reduce((sum, w) => sum + w.pauseMultiplier, 0),
+      };
+    }
+
     if (!this.state.splitHyphens) return word;
     const parts = getHyphenParts(word.text);
     if (parts.length <= 1) return word;
@@ -232,6 +277,34 @@ export class RSVPController extends EventTarget {
     try {
       const stored = localStorage.getItem(SPLIT_HYPHENS_KEY);
       if (stored !== null) return stored === '1';
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  getWordsPerFlashOptions(): number[] {
+    return WORDS_PER_FLASH_OPTIONS;
+  }
+
+  setWordsPerFlash(value: number): void {
+    if (!WORDS_PER_FLASH_OPTIONS.includes(value)) return;
+    this.state.wordsPerFlash = value;
+    try {
+      localStorage.setItem(WORDS_PER_FLASH_KEY, value.toString());
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadWordsPerFlashFromStorage(): number | null {
+    try {
+      const stored = localStorage.getItem(WORDS_PER_FLASH_KEY);
+      if (stored !== null) {
+        const parsed = parseInt(stored, 10);
+        if (WORDS_PER_FLASH_OPTIONS.includes(parsed)) return parsed;
+      }
     } catch {
       /* ignore */
     }
@@ -1138,8 +1211,11 @@ export class RSVPController extends EventTarget {
   }
 
   private advanceToNextWord(): void {
+    const chunkSize = this.currentChunkSize();
+
+    // Hyphen-part stepping only applies when a single word is displayed.
     const word = this.currentWord;
-    if (word && this.state.splitHyphens) {
+    if (chunkSize <= 1 && word && this.state.splitHyphens) {
       const parts = getHyphenParts(word.text);
       if (this.state.currentPartIndex < parts.length - 1) {
         this.state.currentPartIndex += 1;
@@ -1149,7 +1225,7 @@ export class RSVPController extends EventTarget {
       }
     }
 
-    const newIndex = this.state.currentIndex + 1;
+    const newIndex = this.state.currentIndex + chunkSize;
 
     if (newIndex >= this.state.words.length) {
       this.dispatchEvent(new CustomEvent('rsvp-request-next-page'));

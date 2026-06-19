@@ -386,3 +386,41 @@ export function punctuationPauseScale(text: string): number {
   if (/[,;:–—]$/.test(text)) return 0.5;
   return 0;
 }
+
+/**
+ * How many of the leading words to group into one flash, given a max group
+ * size. Always returns at least 1 (when any word is present) and never extends
+ * a group past a word that ends a sentence (".", "!", "?"), so a chunk never
+ * flashes across a sentence boundary.
+ */
+export function chunkWordCount(wordTexts: string[], maxWords: number): number {
+  const limit = Math.min(Math.max(maxWords, 1), wordTexts.length);
+  let count = 0;
+  for (let i = 0; i < limit; i++) {
+    count++;
+    if (/[.!?]$/.test(wordTexts[i]!)) break;
+  }
+  return count;
+}
+
+/**
+ * Join grouped word texts for multi-word display. CJK scripts do not use
+ * inter-word spaces, so no separator is inserted at a boundary touching a CJK
+ * character; all other boundaries are joined with a single space.
+ */
+export function joinChunkText(words: string[]): string {
+  let result = '';
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!;
+    if (i === 0) {
+      result = word;
+      continue;
+    }
+    const prev = words[i - 1]!;
+    const prevLast = prev[prev.length - 1] ?? '';
+    const curFirst = word[0] ?? '';
+    const separator = isCJK(prevLast) || isCJK(curFirst) ? '' : ' ';
+    result += separator + word;
+  }
+  return result;
+}
