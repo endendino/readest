@@ -879,69 +879,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         </div>
       )}
 
-      {/* Context panel (always visible, collapsible) */}
-      <div className='mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-4 md:rounded-xl'>
-        <button
-          className='flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide opacity-60 transition-opacity hover:opacity-80 md:px-4 md:py-3'
-          onClick={toggleContext}
-          aria-expanded={!contextCollapsed}
-          aria-label={contextCollapsed ? _('Show context') : _('Hide context')}
-        >
-          <svg
-            width='14'
-            height='14'
-            viewBox='0 0 24 24'
-            fill='none'
-            stroke='currentColor'
-            strokeWidth='2'
-            className='md:h-4 md:w-4'
-          >
-            <path d='M4 6h16M4 12h16M4 18h10' />
-          </svg>
-          <span className='flex-1 text-left'>{_('Context')}</span>
-          <IoChevronDown
-            className={clsx(
-              'h-3.5 w-3.5 transition-transform duration-200',
-              !contextCollapsed && 'rotate-180',
-            )}
-          />
-        </button>
-        {!contextCollapsed && (
-          <div
-            className='max-h-[20vh] overflow-y-auto px-3 pb-3 md:px-4 md:pb-4'
-            onTouchStart={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => e.stopPropagation()}
-          >
-            <div
-              ref={contextPanelRef}
-              data-testid='rsvp-context-panel'
-              className='select-text text-left text-base leading-relaxed md:text-lg'
-              onClick={handleContextClick}
-              onKeyDown={handleContextKeyDown}
-              onMouseUp={handleContextSelection}
-              onTouchEnd={handleContextSelection}
-            >
-              {hasMoreBefore && <span className='opacity-30'>… </span>}
-              {state.words.slice(contextWindow.start, contextWindow.end).map((w, i) => {
-                const wordIndex = contextWindow.start + i;
-                const isCurrent = wordIndex === state.currentIndex;
-                return (
-                  <ContextWord
-                    key={wordIndex}
-                    text={w.text}
-                    wordIndex={wordIndex}
-                    isCurrent={isCurrent}
-                    currentRef={isCurrent ? contextWordRef : undefined}
-                    orpColor={isCurrent ? effectiveOrpColor : undefined}
-                  />
-                );
-              })}
-              {hasMoreAfter && <span className='opacity-30'>…</span>}
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Main content area */}
       <div className='flex flex-1 flex-col items-center justify-center p-4 md:p-6'>
         <div className='flex h-full w-full flex-col items-center justify-center'>
@@ -1058,6 +995,69 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             <div className='w-px flex-1 bg-current opacity-30' />
           </div>
         </div>
+      </div>
+
+      {/* Context panel — beneath the focal display, collapsible */}
+      <div className='mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-4 md:rounded-xl'>
+        <button
+          className='flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide opacity-60 transition-opacity hover:opacity-80 md:px-4 md:py-3'
+          onClick={toggleContext}
+          aria-expanded={!contextCollapsed}
+          aria-label={contextCollapsed ? _('Show context') : _('Hide context')}
+        >
+          <svg
+            width='14'
+            height='14'
+            viewBox='0 0 24 24'
+            fill='none'
+            stroke='currentColor'
+            strokeWidth='2'
+            className='md:h-4 md:w-4'
+          >
+            <path d='M4 6h16M4 12h16M4 18h10' />
+          </svg>
+          <span className='flex-1 text-left'>{_('Context')}</span>
+          <IoChevronDown
+            className={clsx(
+              'h-3.5 w-3.5 transition-transform duration-200',
+              !contextCollapsed && 'rotate-180',
+            )}
+          />
+        </button>
+        {!contextCollapsed && (
+          <div
+            className='max-h-[20vh] overflow-y-auto px-3 pb-3 md:px-4 md:pb-4'
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+          >
+            <div
+              ref={contextPanelRef}
+              data-testid='rsvp-context-panel'
+              className='select-text text-left text-base leading-loose md:text-lg'
+              onClick={handleContextClick}
+              onKeyDown={handleContextKeyDown}
+              onMouseUp={handleContextSelection}
+              onTouchEnd={handleContextSelection}
+            >
+              {hasMoreBefore && <span className='opacity-30'>… </span>}
+              {state.words.slice(contextWindow.start, contextWindow.end).map((w, i) => {
+                const wordIndex = contextWindow.start + i;
+                const isCurrent = wordIndex === state.currentIndex;
+                return (
+                  <ContextWord
+                    key={wordIndex}
+                    text={w.text}
+                    wordIndex={wordIndex}
+                    isCurrent={isCurrent}
+                    currentRef={isCurrent ? contextWordRef : undefined}
+                    orpColor={isCurrent ? effectiveOrpColor : undefined}
+                  />
+                );
+              })}
+              {hasMoreAfter && <span className='opacity-30'>…</span>}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer */}
