@@ -12,6 +12,7 @@ import {
   chunkWordCount,
   joinChunkText,
   warmupWpm,
+  latinOrpIndex,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
@@ -86,6 +87,31 @@ describe('rsvp/utils', () => {
 
     test('returns the target unchanged when the ramp is disabled', () => {
       expect(warmupWpm(300, 0, 0, 0.5)).toBe(300);
+    });
+  });
+
+  describe('latinOrpIndex', () => {
+    test('puts short words just past the first letter (not on it)', () => {
+      expect(latinOrpIndex('to')).toBe(1);
+      expect(latinOrpIndex('the')).toBe(1);
+      expect(latinOrpIndex('hello')).toBe(1);
+    });
+
+    test('scales the pivot rightward for longer words', () => {
+      expect(latinOrpIndex('internet')).toBe(2);
+      expect(latinOrpIndex('comprehend')).toBe(3);
+      expect(latinOrpIndex('internationalization')).toBe(4);
+    });
+
+    test('skips leading punctuation so the pivot lands on a letter', () => {
+      // '"hello"' -> pivot on the core word "hello", offset past the quote.
+      expect(latinOrpIndex('"hello"')).toBe(2);
+      expect('"hello"'.charAt(latinOrpIndex('"hello"'))).toBe('e');
+    });
+
+    test('returns the first letter for single-letter / empty input', () => {
+      expect(latinOrpIndex('a')).toBe(0);
+      expect(latinOrpIndex('')).toBe(0);
     });
   });
 

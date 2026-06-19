@@ -9,6 +9,7 @@ import {
   chunkWordCount,
   joinChunkText,
   warmupWpm,
+  latinOrpIndex,
 } from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
@@ -1402,14 +1403,7 @@ export class RSVPController extends EventTarget {
       return Math.floor(Math.max(coreLength, 1) / 2);
     }
 
-    const cleanWord = word.replace(/[^\p{L}\p{N}_]/gu, '');
-    const len = cleanWord.length;
-
-    if (len <= 1) return 0;
-    if (len <= 3) return 0;
-    if (len <= 5) return 1;
-    if (len <= 8) return 2;
-    return 3;
+    return latinOrpIndex(word);
   }
 
   private getPauseMultiplier(word: string): number {

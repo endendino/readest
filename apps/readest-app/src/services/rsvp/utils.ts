@@ -443,3 +443,29 @@ export function warmupWpm(
   const fraction = startFraction + (1 - startFraction) * progress;
   return Math.round(targetWpm * fraction);
 }
+
+/**
+ * Optimal Recognition Point index for a Latin-script word — the letter the eye
+ * should fixate, slightly left of centre (Spritz-style pivot bands). Skips
+ * leading punctuation/quotes so the pivot lands on a real letter, and trims
+ * trailing punctuation before measuring length so it scales correctly on long
+ * words instead of capping early.
+ */
+export function latinOrpIndex(word: string): number {
+  const isLetterOrDigit = (ch: string) => /[\p{L}\p{N}]/u.test(ch);
+  let start = 0;
+  while (start < word.length && !isLetterOrDigit(word[start]!)) start++;
+  let end = word.length;
+  while (end > start && !isLetterOrDigit(word[end - 1]!)) end--;
+
+  const coreLen = end - start;
+  if (coreLen <= 1) return start;
+
+  let pivot: number;
+  if (coreLen <= 5) pivot = 1;
+  else if (coreLen <= 9) pivot = 2;
+  else if (coreLen <= 13) pivot = 3;
+  else pivot = 4;
+
+  return start + pivot;
+}
