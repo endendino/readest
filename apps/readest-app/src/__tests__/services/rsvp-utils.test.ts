@@ -9,8 +9,7 @@ import {
   splitTextIntoWords,
   getHyphenParts,
   punctuationPauseScale,
-  chunkWordCount,
-  joinChunkText,
+  phraseChunkSize,
   warmupWpm,
   latinOrpIndex,
 } from '@/services/rsvp/utils';
@@ -35,34 +34,25 @@ describe('rsvp/utils', () => {
     });
   });
 
-  describe('chunkWordCount', () => {
-    test('groups up to the max number of words', () => {
-      expect(chunkWordCount(['the', 'quick', 'brown', 'fox'], 3)).toBe(3);
-      expect(chunkWordCount(['the', 'quick'], 3)).toBe(2);
+  describe('phraseChunkSize', () => {
+    test('packs words up to the character budget', () => {
+      // "The"(3) + " quick"(6) = 9 <= 14; adding " brown" would reach 15 > 14.
+      expect(phraseChunkSize(['The', 'quick', 'brown', 'fox'], 14)).toBe(2);
     });
 
-    test('never extends a group past a sentence-ending word', () => {
-      expect(chunkWordCount(['end.', 'New', 'one'], 3)).toBe(1);
-      expect(chunkWordCount(['a', 'end.', 'New'], 3)).toBe(2);
+    test('breaks after clause/sentence punctuation', () => {
+      expect(phraseChunkSize(['brown', 'fox,', 'jumped'], 14)).toBe(2);
+      expect(phraseChunkSize(['end.', 'New', 'one'], 14)).toBe(1);
     });
 
-    test('returns at least 1, or 0 when there are no words', () => {
-      expect(chunkWordCount(['only'], 3)).toBe(1);
-      expect(chunkWordCount([], 3)).toBe(0);
-    });
-  });
-
-  describe('joinChunkText', () => {
-    test('joins Latin words with spaces', () => {
-      expect(joinChunkText(['the', 'quick', 'brown'])).toBe('the quick brown');
+    test('does not strand a lone short function word', () => {
+      // "the" alone fits, but the long next word exceeds budget; pull it in anyway.
+      expect(phraseChunkSize(['the', 'extraordinary'], 14)).toBe(2);
     });
 
-    test('joins CJK words without spaces', () => {
-      expect(joinChunkText(['今天', '天气'])).toBe('今天天气');
-    });
-
-    test('returns a single word unchanged', () => {
-      expect(joinChunkText(['hello'])).toBe('hello');
+    test('always returns at least 1 word, or 0 for none', () => {
+      expect(phraseChunkSize(['single'], 14)).toBe(1);
+      expect(phraseChunkSize([], 14)).toBe(0);
     });
   });
 

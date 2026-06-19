@@ -388,41 +388,34 @@ export function punctuationPauseScale(text: string): number {
 }
 
 /**
- * How many of the leading words to group into one flash, given a max group
- * size. Always returns at least 1 (when any word is present) and never extends
- * a group past a word that ends a sentence (".", "!", "?"), so a chunk never
- * flashes across a sentence boundary.
+ * How many of the leading words form the next phrase chunk, given a character
+ * budget. Packs words until adding the next would exceed the budget (counting a
+ * joining space), always returns at least 1, never extends past a word ending in
+ * sentence/clause punctuation (so a chunk never flashes across a clause break),
+ * and pulls in a second word when the first is a short function word so it is
+ * not stranded alone. Returns 0 for no words.
  */
-export function chunkWordCount(wordTexts: string[], maxWords: number): number {
-  const limit = Math.min(Math.max(maxWords, 1), wordTexts.length);
-  let count = 0;
-  for (let i = 0; i < limit; i++) {
-    count++;
-    if (/[.!?]$/.test(wordTexts[i]!)) break;
-  }
-  return count;
-}
+export function phraseChunkSize(wordTexts: string[], budget: number): number {
+  if (wordTexts.length === 0) return 0;
 
-/**
- * Join grouped word texts for multi-word display. CJK scripts do not use
- * inter-word spaces, so no separator is inserted at a boundary touching a CJK
- * character; all other boundaries are joined with a single space.
- */
-export function joinChunkText(words: string[]): string {
-  let result = '';
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i]!;
-    if (i === 0) {
-      result = word;
-      continue;
-    }
-    const prev = words[i - 1]!;
-    const prevLast = prev[prev.length - 1] ?? '';
-    const curFirst = word[0] ?? '';
-    const separator = isCJK(prevLast) || isCJK(curFirst) ? '' : ' ';
-    result += separator + word;
+  let count = 0;
+  let width = 0;
+  for (let i = 0; i < wordTexts.length; i++) {
+    const word = wordTexts[i]!;
+    const add = (count === 0 ? 0 : 1) + word.length; // +1 for the joining space
+    if (count > 0 && width + add > budget) break;
+    count++;
+    width += add;
+    if (/[.!?,;:]$/.test(word)) break;
   }
-  return result;
+
+  // Don't strand a lone short function word ("the", "of", …): pull in the next.
+  if (count === 1 && wordTexts.length > 1) {
+    const first = wordTexts[0]!;
+    if (first.length <= 3 && !/[.!?,;:]$/.test(first)) count = 2;
+  }
+
+  return count;
 }
 
 /**

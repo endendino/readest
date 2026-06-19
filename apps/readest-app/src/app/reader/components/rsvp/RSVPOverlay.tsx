@@ -157,6 +157,8 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const isSettingsDialogOpen = useSettingsStore((s) => s.isSettingsDialogOpen);
   const [state, setState] = useState<RsvpState>(controller.currentState);
   const currentWord = controller.currentDisplayWord;
+  const currentChunk = controller.currentDisplayChunk;
+  const isChunk = currentChunk.length > 1;
   // The transport (center) play/pause controls TTS while read-along is engaged,
   // otherwise RSVP's own timer (#3235). A ref keeps the latest closure so the
   // capture-phase keyboard/tap effects don't need it in their dep arrays.
@@ -975,7 +977,42 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                   fontFamily,
                 }}
               >
-                {currentWord ? (
+                {isChunk ? (
+                  <div className='flex items-baseline justify-center gap-[0.4em]'>
+                    {currentChunk.map((w, i) => {
+                      const wordIndex = state.currentIndex + i;
+                      const cjk = containsCJK(w.text);
+                      const rtl = isRTLText(w.text);
+                      if (rtl || (cjk && highlightWholeWord)) {
+                        return (
+                          <span
+                            key={wordIndex}
+                            className='font-bold'
+                            style={{ color: effectiveOrpColor }}
+                            dir={rtl ? 'rtl' : undefined}
+                          >
+                            {w.text}
+                          </span>
+                        );
+                      }
+                      const before = w.text.substring(0, w.orpIndex);
+                      const orp = w.text.charAt(w.orpIndex);
+                      const after = w.text.substring(w.orpIndex + 1);
+                      return (
+                        <span key={wordIndex} className='opacity-60'>
+                          {before}
+                          <span
+                            className='font-bold opacity-100'
+                            style={{ color: effectiveOrpColor }}
+                          >
+                            {orp}
+                          </span>
+                          {after}
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : currentWord ? (
                   isRTLWord || (isCJKWord && highlightWholeWord) ? (
                     // Whole-word mode: center the full word and color it, instead
                     // of anchoring a single focus character. Used for CJK Highlight
@@ -1215,24 +1252,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               </select>
             </label>
 
-            {/* Words per flash */}
-            <label className='flex cursor-pointer items-center gap-1.5 font-medium opacity-80'>
-              <span className='mr-0.5 font-medium opacity-50'>{_('Words')}</span>
-              <select
-                data-testid='rsvp-words-per-flash-select'
-                className='cursor-pointer rounded border border-gray-500/30 bg-gray-500/20 px-1.5 py-1 text-xs font-medium transition-colors hover:border-gray-500/40 hover:bg-gray-500/30'
-                style={{ color: 'inherit' }}
-                value={state.wordsPerFlash}
-                onChange={(e) => controller.setWordsPerFlash(parseInt(e.target.value, 10))}
-              >
-                {controller.getWordsPerFlashOptions().map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-
             {/* Pre-start countdown delay */}
             <label className='flex cursor-pointer items-center gap-1.5 font-medium opacity-80'>
               <span className='mr-0.5 font-medium opacity-50'>{_('Start Delay')}</span>
@@ -1283,6 +1302,18 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 className='toggle'
                 checked={state.splitHyphens}
                 onChange={(e) => controller.setSplitHyphens(e.target.checked)}
+              />
+            </div>
+
+            {/* Phrase chunking — flash intelligent multi-word phrases */}
+            <div className='config-item gap-2'>
+              <span className='opacity-50'>{_('Chunking')}</span>
+              <input
+                type='checkbox'
+                data-testid='rsvp-chunking-toggle'
+                className='toggle'
+                checked={state.chunking}
+                onChange={(e) => controller.setChunking(e.target.checked)}
               />
             </div>
 

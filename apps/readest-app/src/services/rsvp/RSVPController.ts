@@ -6,8 +6,7 @@ import {
   splitTextIntoWords,
   getHyphenParts,
   punctuationPauseScale,
-  chunkWordCount,
-  joinChunkText,
+  phraseChunkSize,
   warmupWpm,
   latinOrpIndex,
 } from './utils';
@@ -23,8 +22,11 @@ const DEFAULT_PUNCTUATION_PAUSE_MS = 100;
 const PUNCTUATION_PAUSE_OPTIONS = [25, 50, 75, 100, 125, 150, 175, 200];
 const DEFAULT_SPLIT_HYPHENS = false;
 const DEFAULT_CJK_CHAR_MODE = false;
-const DEFAULT_WORDS_PER_FLASH = 1;
-const WORDS_PER_FLASH_OPTIONS = [1, 2, 3];
+const DEFAULT_CHUNKING = false;
+// Phrase-chunk packing: target display width in characters and how many words
+// ahead to consider when forming one chunk.
+const CHUNK_CHAR_BUDGET = 14;
+const MAX_CHUNK_LOOKAHEAD = 8;
 const DEFAULT_WARMUP_RAMP = false;
 // Warm-up ramp: ease from half the target speed up to full over the first words
 // after each start/resume.
@@ -51,7 +53,7 @@ const PUNCTUATION_PAUSE_KEY_PREFIX = 'readest_rsvp_pause_';
 const POSITION_KEY_PREFIX = 'readest_rsvp_pos_';
 const SPLIT_HYPHENS_KEY = 'readest_rsvp_split_hyphens';
 const CJK_CHAR_MODE_KEY = 'readest_rsvp_cjk_char_mode';
-const WORDS_PER_FLASH_KEY = 'readest_rsvp_words_per_flash';
+const CHUNKING_KEY = 'readest_rsvp_chunking';
 const WARMUP_RAMP_KEY = 'readest_rsvp_warmup_ramp';
 const START_DELAY_KEY = 'readest_rsvp_start_delay';
 
@@ -74,7 +76,7 @@ export class RSVPController extends EventTarget {
     punctuationPauseMs: DEFAULT_PUNCTUATION_PAUSE_MS,
     splitHyphens: DEFAULT_SPLIT_HYPHENS,
     cjkCharMode: DEFAULT_CJK_CHAR_MODE,
-    wordsPerFlash: DEFAULT_WORDS_PER_FLASH,
+    chunking: DEFAULT_CHUNKING,
     warmupRamp: DEFAULT_WARMUP_RAMP,
     startDelaySeconds: DEFAULT_START_DELAY_SECONDS,
     hasCJK: false,
@@ -140,9 +142,9 @@ export class RSVPController extends EventTarget {
     if (savedCjkCharMode !== null) {
       this.state.cjkCharMode = savedCjkCharMode;
     }
-    const savedWordsPerFlash = this.loadWordsPerFlashFromStorage();
-    if (savedWordsPerFlash !== null) {
-      this.state.wordsPerFlash = savedWordsPerFlash;
+    const savedChunking = this.loadChunkingFromStorage();
+    if (savedChunking !== null) {
+      this.state.chunking = savedChunking;
     }
     const savedWarmupRamp = this.loadWarmupRampFromStorage();
     if (savedWarmupRamp !== null) {
@@ -169,45 +171,39 @@ export class RSVPController extends EventTarget {
     return null;
   }
 
-  // Multi-word grouping is disabled while an external driver (TTS sync) owns
+  // Phrase chunking is disabled while an external driver (TTS sync) owns
   // advancement, since that path is inherently word-by-word.
-  private get effectiveWordsPerFlash(): number {
-    return this.#externallyDriven ? 1 : this.state.wordsPerFlash;
+  private get effectiveChunking(): boolean {
+    return this.state.chunking && !this.#externallyDriven;
   }
 
-  // How many words the flash starting at the current index covers: up to
-  // effectiveWordsPerFlash, never spanning a sentence boundary.
+  // How many words the flash starting at the current index covers: 1, unless
+  // chunking is on, in which case an intelligent phrase chunk (char-budget +
+  // clause-aware) is formed.
   private currentChunkSize(): number {
-    const max = this.effectiveWordsPerFlash;
-    if (max <= 1) return 1;
+    if (!this.effectiveChunking) return 1;
     const texts = this.state.words
-      .slice(this.state.currentIndex, this.state.currentIndex + max)
+      .slice(this.state.currentIndex, this.state.currentIndex + MAX_CHUNK_LOOKAHEAD)
       .map((w) => w.text);
-    return Math.max(1, chunkWordCount(texts, max));
+    return Math.max(1, phraseChunkSize(texts, CHUNK_CHAR_BUDGET));
+  }
+
+  // The real words shown in the current flash, each keeping its own orpIndex.
+  // A single-word flash returns one word; the overlay renders length > 1 inline
+  // with real spaces, so nothing is joined and no space is ever lost.
+  get currentDisplayChunk(): RsvpWord[] {
+    const word = this.currentWord;
+    if (!word) return [];
+    const size = this.currentChunkSize();
+    if (size <= 1) return [word];
+    return this.state.words.slice(this.state.currentIndex, this.state.currentIndex + size);
   }
 
   get currentDisplayWord(): RsvpWord | null {
     const word = this.currentWord;
     if (!word) return null;
-
-    const chunkSize = this.currentChunkSize();
-    if (chunkSize > 1) {
-      const slice = this.state.words.slice(
-        this.state.currentIndex,
-        this.state.currentIndex + chunkSize,
-      );
-      const text = joinChunkText(slice.map((w) => w.text));
-      // Keep the first word's range/cfi (position + TTS anchor stay valid) and
-      // sum the per-word pause multipliers so the group is held for ~N words.
-      return {
-        ...word,
-        text,
-        orpIndex: this.calculateORP(text),
-        pauseMultiplier: slice.reduce((sum, w) => sum + w.pauseMultiplier, 0),
-      };
-    }
-
-    if (!this.state.splitHyphens) return word;
+    // Hyphen-part display only applies to plain single-word reading.
+    if (this.effectiveChunking || !this.state.splitHyphens) return word;
     const parts = getHyphenParts(word.text);
     if (parts.length <= 1) return word;
     const partText = parts[this.state.currentPartIndex] ?? word.text;
@@ -299,28 +295,20 @@ export class RSVPController extends EventTarget {
     return null;
   }
 
-  getWordsPerFlashOptions(): number[] {
-    return WORDS_PER_FLASH_OPTIONS;
-  }
-
-  setWordsPerFlash(value: number): void {
-    if (!WORDS_PER_FLASH_OPTIONS.includes(value)) return;
-    this.state.wordsPerFlash = value;
+  setChunking(value: boolean): void {
+    this.state.chunking = value;
     try {
-      localStorage.setItem(WORDS_PER_FLASH_KEY, value.toString());
+      localStorage.setItem(CHUNKING_KEY, value ? '1' : '0');
     } catch {
       /* ignore */
     }
     this.emitStateChange();
   }
 
-  private loadWordsPerFlashFromStorage(): number | null {
+  private loadChunkingFromStorage(): boolean | null {
     try {
-      const stored = localStorage.getItem(WORDS_PER_FLASH_KEY);
-      if (stored !== null) {
-        const parsed = parseInt(stored, 10);
-        if (WORDS_PER_FLASH_OPTIONS.includes(parsed)) return parsed;
-      }
+      const stored = localStorage.getItem(CHUNKING_KEY);
+      if (stored !== null) return stored === '1';
     } catch {
       /* ignore */
     }
@@ -1249,8 +1237,15 @@ export class RSVPController extends EventTarget {
       return;
     }
 
-    const displayWord = this.currentDisplayWord!;
-    const duration = this.getWordDisplayDuration(displayWord, this.effectiveWpm());
+    const wpm = this.effectiveWpm();
+    const chunk = this.currentDisplayChunk;
+    // A chunk is held for the sum of its words' durations (so the closing word's
+    // punctuation pause still applies); a single word uses its own duration,
+    // which preserves hyphen-part timing.
+    const duration =
+      chunk.length > 1
+        ? chunk.reduce((sum, w) => sum + this.getWordDisplayDuration(w, wpm), 0)
+        : this.getWordDisplayDuration(this.currentDisplayWord!, wpm);
 
     this.playbackTimer = setTimeout(() => {
       this.advanceToNextWord();
@@ -1260,9 +1255,9 @@ export class RSVPController extends EventTarget {
   private advanceToNextWord(): void {
     const chunkSize = this.currentChunkSize();
 
-    // Hyphen-part stepping only applies when a single word is displayed.
+    // Hyphen-part stepping only applies to plain single-word reading.
     const word = this.currentWord;
-    if (chunkSize <= 1 && word && this.state.splitHyphens) {
+    if (!this.effectiveChunking && word && this.state.splitHyphens) {
       const parts = getHyphenParts(word.text);
       if (this.state.currentPartIndex < parts.length - 1) {
         this.state.currentPartIndex += 1;

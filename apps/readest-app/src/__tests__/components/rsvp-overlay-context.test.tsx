@@ -56,7 +56,7 @@ const buildState = (overrides: Partial<RsvpState> = {}): RsvpState => ({
   punctuationPauseMs: 100,
   splitHyphens: false,
   cjkCharMode: false,
-  wordsPerFlash: 1,
+  chunking: false,
   warmupRamp: false,
   startDelaySeconds: 3,
   hasCJK: false,
@@ -72,6 +72,10 @@ const buildController = (state: RsvpState) => {
     },
     get currentDisplayWord() {
       return state.words[state.currentIndex] ?? null;
+    },
+    get currentDisplayChunk() {
+      const w = state.words[state.currentIndex];
+      return w ? [w] : [];
     },
     get currentCountdown() {
       return null;
@@ -92,12 +96,11 @@ const buildController = (state: RsvpState) => {
     setSplitHyphens: vi.fn(),
     setCjkCharMode: vi.fn(),
     setStartDelay: vi.fn(),
-    setWordsPerFlash: vi.fn(),
+    setChunking: vi.fn(),
     setWarmupRamp: vi.fn(),
     getWpmOptions: vi.fn(() => [100, 200, 300]),
     getPunctuationPauseOptions: vi.fn(() => [25, 50, 100]),
     getStartDelayOptions: vi.fn(() => [0, 1, 2, 3]),
-    getWordsPerFlashOptions: vi.fn(() => [1, 2, 3]),
     addEventListener: vi.fn((type: string, listener: EventListener) => {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type)!.push(listener);
