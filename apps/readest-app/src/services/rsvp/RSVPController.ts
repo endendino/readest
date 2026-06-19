@@ -1,6 +1,12 @@
 import { FoliateView } from '@/types/view';
 import { RsvpWord, RsvpState, RsvpPosition, RsvpStopPosition, RsvpStartChoice } from './types';
-import { containsCJK, isCJKPunctuation, splitTextIntoWords, getHyphenParts } from './utils';
+import {
+  containsCJK,
+  isCJKPunctuation,
+  splitTextIntoWords,
+  getHyphenParts,
+  punctuationPauseScale,
+} from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
 import { isRangeLike } from '@/utils/range';
@@ -1305,13 +1311,12 @@ export class RSVPController extends EventTarget {
 
   private getWordDisplayDuration(word: RsvpWord, wpm: number): number {
     const baseMs = 60000 / wpm;
-    let duration = baseMs * word.pauseMultiplier;
-
-    if (/[.!?,;:–—]$/.test(word.text)) {
-      duration += this.state.punctuationPauseMs;
-    }
-
-    return duration;
+    // Scale the configured punctuation pause by punctuation strength, so a comma
+    // breathes less than a full stop (previously every mark shared one flat pause).
+    return (
+      baseMs * word.pauseMultiplier +
+      this.state.punctuationPauseMs * punctuationPauseScale(word.text)
+    );
   }
 
   private emitStateChange(): void {

@@ -8,9 +8,29 @@ import {
   segmentCJKText,
   splitTextIntoWords,
   getHyphenParts,
+  punctuationPauseScale,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
+  describe('punctuationPauseScale', () => {
+    test('gives sentence-ending punctuation the full weight', () => {
+      expect(punctuationPauseScale('end.')).toBe(1);
+      expect(punctuationPauseScale('really?')).toBe(1);
+      expect(punctuationPauseScale('stop!')).toBe(1);
+    });
+
+    test('gives clause-level punctuation half the weight', () => {
+      expect(punctuationPauseScale('yes,')).toBe(0.5);
+      expect(punctuationPauseScale('first;')).toBe(0.5);
+      expect(punctuationPauseScale('note:')).toBe(0.5);
+      expect(punctuationPauseScale('dash—')).toBe(0.5);
+    });
+
+    test('is 0 for a word with no trailing pause punctuation', () => {
+      expect(punctuationPauseScale('word')).toBe(0);
+    });
+  });
+
   describe('isCJK', () => {
     test('returns true for CJK Unified Ideographs', () => {
       expect(isCJK('\u4e00')).toBe(true); // first CJK character
