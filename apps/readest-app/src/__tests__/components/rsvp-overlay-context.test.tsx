@@ -101,6 +101,7 @@ const buildController = (state: RsvpState) => {
     setChunking: vi.fn(),
     setWarmupRamp: vi.fn(),
     setSmoothFlashes: vi.fn(),
+    setHoldSlow: vi.fn(),
     getWpmOptions: vi.fn(() => [100, 200, 300]),
     getPunctuationPauseOptions: vi.fn(() => [25, 50, 100]),
     getStartDelayOptions: vi.fn(() => [0, 1, 2, 3]),

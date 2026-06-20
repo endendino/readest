@@ -97,6 +97,9 @@ export class RSVPController extends EventTarget {
   // Word index where the current play/resume began; the warm-up ramp eases the
   // effective WPM up over the first WARMUP_RAMP_WORDS words from here. -1 = unset.
   #rampAnchorIndex = -1;
+  // Press-and-hold "slow-mo": halves the effective WPM while engaged (picked up
+  // on the next scheduled word). Transient — never persisted.
+  #holdSlow = false;
 
   // Slice 3a (#3235): externally-driven sync (e.g. TTS drives RSVP word display).
   // #lastSyncIndex is a monotonic cursor so forward word-by-word sync scans from
@@ -264,6 +267,12 @@ export class RSVPController extends EventTarget {
     this.state.wpm = clampedWpm;
     this.saveWpmToStorage(clampedWpm);
     this.emitStateChange();
+  }
+
+  // Press-and-hold slow-mo (transient, not persisted). Applied on the next
+  // scheduled word via effectiveWpm; release restores full speed.
+  setHoldSlow(on: boolean): void {
+    this.#holdSlow = on;
   }
 
   private loadWpmFromStorage(): number | null {
@@ -1314,9 +1323,13 @@ export class RSVPController extends EventTarget {
   // Effective WPM for the next word: applies the warm-up ramp (when enabled)
   // from the anchor set at the last start/resume, otherwise the configured WPM.
   private effectiveWpm(): number {
-    if (!this.state.warmupRamp || this.#rampAnchorIndex < 0) return this.state.wpm;
-    const wordsIntoRamp = this.state.currentIndex - this.#rampAnchorIndex;
-    return warmupWpm(this.state.wpm, wordsIntoRamp, WARMUP_RAMP_WORDS, WARMUP_RAMP_START_FRACTION);
+    let wpm = this.state.wpm;
+    if (this.state.warmupRamp && this.#rampAnchorIndex >= 0) {
+      const wordsIntoRamp = this.state.currentIndex - this.#rampAnchorIndex;
+      wpm = warmupWpm(this.state.wpm, wordsIntoRamp, WARMUP_RAMP_WORDS, WARMUP_RAMP_START_FRACTION);
+    }
+    if (this.#holdSlow) wpm = Math.max(MIN_WPM, Math.round(wpm * 0.5));
+    return wpm;
   }
 
   private scheduleNextWord(): void {

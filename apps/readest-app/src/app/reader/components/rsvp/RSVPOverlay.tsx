@@ -259,6 +259,8 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
+  const holdSlowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdSlowActive = useRef(false);
   const isDraggingProgressBar = useRef(false);
   const wasPlayingBeforeDrag = useRef(false);
   const [isProgressBarDragging, setIsProgressBarDragging] = useState(false);
@@ -521,15 +523,56 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   );
 
   // Touch handlers
+  const cancelHoldSlow = () => {
+    if (holdSlowTimer.current) {
+      clearTimeout(holdSlowTimer.current);
+      holdSlowTimer.current = null;
+    }
+    if (holdSlowActive.current) {
+      holdSlowActive.current = false;
+      controller.setHoldSlow(false);
+    }
+  };
+
   const handleTouchStart = (event: React.TouchEvent) => {
     if (event.touches.length !== 1) return;
     const touch = event.touches[0]!;
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
     touchStartTime.current = Date.now();
+
+    // Press-and-hold on the reading area engages slow-mo until release. The
+    // 300ms delay clears the tap window (taps are < 300ms), so taps still work.
+    // Skip the header/footer controls, which own their own gestures.
+    const target = event.target as HTMLElement;
+    if (target.closest('.rsvp-controls') || target.closest('.rsvp-header')) return;
+    holdSlowTimer.current = setTimeout(() => {
+      holdSlowActive.current = true;
+      controller.setHoldSlow(true);
+    }, 300);
+  };
+
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!holdSlowTimer.current && !holdSlowActive.current) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    // Movement means a swipe/scroll, not a hold — cancel slow-mo.
+    if (
+      Math.abs(touch.clientX - touchStartX.current) > TAP_THRESHOLD ||
+      Math.abs(touch.clientY - touchStartY.current) > TAP_THRESHOLD
+    ) {
+      cancelHoldSlow();
+    }
   };
 
   const handleTouchEnd = (event: React.TouchEvent) => {
+    // A completed press-and-hold releases slow-mo; it is not a tap or swipe.
+    if (holdSlowActive.current) {
+      cancelHoldSlow();
+      return;
+    }
+    cancelHoldSlow();
+
     if (event.changedTouches.length !== 1) return;
 
     // Touches starting on the header or footer controls (progress bar, buttons,
@@ -559,7 +602,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       const tapX = touch.clientX;
 
       if (tapX < screenWidth * 0.25) {
-        controller.skipBackward(15);
+        controller.rewindParagraph();
       } else if (tapX > screenWidth * 0.75) {
         controller.skipForward(15);
       } else {
@@ -755,6 +798,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         '--rsvp-bg': bgColor,
       }}
       onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       {/* ── Header ── */}
