@@ -26,6 +26,7 @@ import {
   IoLockClosed,
 } from 'react-icons/io5';
 import { useTranslation } from '@/hooks/useTranslation';
+import RSVPCalibration from './RSVPCalibration';
 import { getPopupPosition, Position } from '@/utils/sel';
 import { Overlay } from '@/components/Overlay';
 import DictionarySheet from '@/app/reader/components/annotator/DictionarySheet';
@@ -76,6 +77,7 @@ const STORAGE_KEY_FONT_SIZE = 'readest_rsvp_fontsize';
 const STORAGE_KEY_ORP_COLOR = 'readest_rsvp_orp_color';
 const STORAGE_KEY_CONTEXT = 'readest_rsvp_context';
 const STORAGE_KEY_HIGHLIGHT_WORD = 'readest_rsvp_cjk_highlight_word';
+const STORAGE_KEY_CALIBRATED = 'readest_rsvp_calibrated';
 
 // Context panel windowing — long sections (e.g. AZW3 chapters with 40k+ words)
 // would otherwise render tens of thousands of <span> elements and freeze the UI
@@ -201,6 +203,13 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const [showWpmDropdown, setShowWpmDropdown] = useState(false);
   const [showRateDropdown, setShowRateDropdown] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCalibration, setShowCalibration] = useState(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_CALIBRATED) !== '1';
+    } catch {
+      return false;
+    }
+  });
   const [contextCollapsed, setContextCollapsed] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEY_CONTEXT) === '1';
@@ -402,6 +411,26 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       easing: 'ease-out',
     });
   }, [state.currentIndex, state.smoothFlashes]);
+
+  // Keep the reader paused while the calibration ramp is shown; the start
+  // countdown gives this effect time to land before any real word is displayed.
+  useEffect(() => {
+    if (showCalibration) controller.pause();
+  }, [showCalibration, controller]);
+
+  const handleCalibrationComplete = useCallback(
+    (newWpm: number | null) => {
+      if (newWpm !== null) controller.setWpm(newWpm);
+      try {
+        localStorage.setItem(STORAGE_KEY_CALIBRATED, '1');
+      } catch {
+        /* ignore */
+      }
+      setShowCalibration(false);
+      controller.resume();
+    },
+    [controller],
+  );
 
   const effectiveChapterHref = currentChapterHref;
 
@@ -801,6 +830,14 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
+      {showCalibration && (
+        <RSVPCalibration
+          fontFamily={fontFamily}
+          orpColor={effectiveOrpColor}
+          onComplete={handleCalibrationComplete}
+        />
+      )}
+
       {/* ── Header ── */}
       <div className='rsvp-header flex shrink-0 items-center gap-2 px-3 py-2 md:gap-3 md:px-5 md:py-3'>
         <button
@@ -1455,6 +1492,19 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 onChange={(e) => controller.setSmoothFlashes(e.target.checked)}
               />
             </div>
+
+            {/* Re-run the speed calibration ramp */}
+            <button
+              type='button'
+              data-testid='rsvp-calibrate-button'
+              onClick={() => {
+                setShowSettings(false);
+                setShowCalibration(true);
+              }}
+              className='rounded border border-gray-500/30 bg-gray-500/20 px-2 py-1 text-xs font-medium transition-colors hover:border-gray-500/40 hover:bg-gray-500/30'
+            >
+              {_('Calibrate speed')}
+            </button>
 
             {/* CJK character mode — split CJK text per-character */}
             {state.hasCJK && (
