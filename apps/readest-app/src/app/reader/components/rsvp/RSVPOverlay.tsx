@@ -1166,6 +1166,16 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         {/* Playback controls */}
         <div className='relative flex items-center justify-center gap-1 md:gap-2'>
           <button
+            aria-label={_('Rewind to paragraph')}
+            className='flex cursor-pointer items-center gap-0.5 rounded-full border-none bg-transparent px-2 py-1.5 transition-colors hover:bg-gray-500/20 active:scale-95'
+            onClick={() => controller.rewindParagraph()}
+            title={_('Rewind to paragraph start, then previous paragraph')}
+          >
+            <span className='text-xs font-semibold opacity-80'>¶</span>
+            <IoPlaySkipBack className='h-5 w-5 md:h-6 md:w-6' />
+          </button>
+
+          <button
             aria-label={_('Skip back 15 words')}
             className='flex cursor-pointer items-center gap-0.5 rounded-full border-none bg-transparent px-2 py-1.5 transition-colors hover:bg-gray-500/20 active:scale-95'
             onClick={() => controller.skipBackward(15)}

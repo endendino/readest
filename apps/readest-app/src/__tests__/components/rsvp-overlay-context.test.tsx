@@ -84,6 +84,7 @@ const buildController = (state: RsvpState) => {
     seekToPosition: vi.fn(),
     skipBackward: vi.fn(),
     skipForward: vi.fn(),
+    rewindParagraph: vi.fn(),
     nextWord: vi.fn(),
     prevWord: vi.fn(),
     pause: vi.fn(),

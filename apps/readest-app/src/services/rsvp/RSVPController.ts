@@ -869,6 +869,40 @@ export class RSVPController extends EventTarget {
     this.emitStateChange();
   }
 
+  // Regression: the first call jumps to the start of the current paragraph;
+  // calling again while already at the start jumps to the previous paragraph.
+  rewindParagraph(): void {
+    const words = this.state.words;
+    if (words.length === 0) return;
+    const cur = Math.min(this.state.currentIndex, words.length - 1);
+
+    let curParaStart = 0;
+    for (let i = cur; i >= 0; i--) {
+      if (words[i]?.isParagraphStart) {
+        curParaStart = i;
+        break;
+      }
+    }
+
+    let target = curParaStart;
+    if (cur <= curParaStart) {
+      // Already at this paragraph's start → step back to the previous one.
+      target = 0;
+      for (let i = curParaStart - 1; i >= 0; i--) {
+        if (words[i]?.isParagraphStart) {
+          target = i;
+          break;
+        }
+      }
+    }
+
+    this.state.currentIndex = target;
+    this.state.currentPartIndex = 0;
+    this.#rampAnchorIndex = target; // ease back in if the warm-up ramp is on
+    this.emitManualNav();
+    this.emitStateChange();
+  }
+
   // Manual single-word stepping for self-paced reading (#4476). Pauses
   // playback first so repeated presses advance exactly one word at a time;
   // resume is left to the user.
@@ -1330,6 +1364,9 @@ export class RSVPController extends EventTarget {
     const excludeTags = new Set(['SCRIPT', 'STYLE', 'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
     const words: RsvpWord[] = [];
     const view = doc.defaultView;
+    // The first word inside each block-level box is flagged as a paragraph start
+    // (used by rewindParagraph). Starts true so the very first word qualifies.
+    let pendingParagraphBreak = true;
 
     const walk = (node: Node): void => {
       if (node.nodeType === Node.TEXT_NODE) {
@@ -1340,6 +1377,9 @@ export class RSVPController extends EventTarget {
         for (const word of nodeWords) {
           const wordStart = text.indexOf(word, offset);
           if (wordStart === -1) continue;
+
+          const paraStart = pendingParagraphBreak;
+          pendingParagraphBreak = false;
 
           try {
             const range = doc.createRange();
@@ -1355,12 +1395,14 @@ export class RSVPController extends EventTarget {
               pauseMultiplier: this.getPauseMultiplier(word),
               range,
               docIndex,
+              ...(paraStart ? { isParagraphStart: true } : {}),
             });
           } catch {
             words.push({
               text: word,
               orpIndex: this.calculateORP(word),
               pauseMultiplier: this.getPauseMultiplier(word),
+              ...(paraStart ? { isParagraphStart: true } : {}),
             });
           }
 
@@ -1378,6 +1420,13 @@ export class RSVPController extends EventTarget {
 
       const style = view?.getComputedStyle(el);
       if (style?.display === 'none' || style?.visibility === 'hidden') return;
+
+      // A block-level box begins a new paragraph; the next word pushed becomes a
+      // paragraph start. Reuses the computed style above (no extra layout cost).
+      const display = style?.display;
+      if (display && display !== 'contents' && !display.startsWith('inline')) {
+        pendingParagraphBreak = true;
+      }
 
       // Walk children directly: Array.from(childNodes) would allocate an array
       // per element, and this runs for tens of thousands of nodes per section.

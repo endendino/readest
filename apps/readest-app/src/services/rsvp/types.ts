@@ -5,6 +5,7 @@ export interface RsvpWord {
   range?: Range;
   docIndex?: number;
   cfi?: string; // Canonical Fragment Identifier for precise position tracking
+  isParagraphStart?: boolean; // first word of a block-level box (for regression)
 }
 
 export interface RsvpState {
