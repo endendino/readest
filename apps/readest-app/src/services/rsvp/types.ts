@@ -22,6 +22,7 @@ export interface RsvpState {
   cjkCharMode: boolean;
   chunking: boolean;
   warmupRamp: boolean;
+  smoothFlashes: boolean;
   startDelaySeconds: number;
   hasCJK: boolean;
   progress: number;

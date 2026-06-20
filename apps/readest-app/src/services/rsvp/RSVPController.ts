@@ -33,6 +33,9 @@ const DEFAULT_WARMUP_RAMP = false;
 // after each start/resume.
 const WARMUP_RAMP_WORDS = 8;
 const WARMUP_RAMP_START_FRACTION = 0.5;
+const DEFAULT_SMOOTH_FLASHES = false;
+// Comfort mode: a small extra beat between chunks to reinforce phrase grouping.
+const CHUNK_BEAT_MS = 35;
 const DEFAULT_START_DELAY_SECONDS = 3;
 const START_DELAY_OPTIONS = [0, 1, 2, 3];
 
@@ -56,6 +59,7 @@ const SPLIT_HYPHENS_KEY = 'readest_rsvp_split_hyphens';
 const CJK_CHAR_MODE_KEY = 'readest_rsvp_cjk_char_mode';
 const CHUNKING_KEY = 'readest_rsvp_chunking';
 const WARMUP_RAMP_KEY = 'readest_rsvp_warmup_ramp';
+const SMOOTH_FLASHES_KEY = 'readest_rsvp_smooth_flashes';
 const START_DELAY_KEY = 'readest_rsvp_start_delay';
 
 // Section-only CFI (no '!') sorts before any word CFI in that section.
@@ -79,6 +83,7 @@ export class RSVPController extends EventTarget {
     cjkCharMode: DEFAULT_CJK_CHAR_MODE,
     chunking: DEFAULT_CHUNKING,
     warmupRamp: DEFAULT_WARMUP_RAMP,
+    smoothFlashes: DEFAULT_SMOOTH_FLASHES,
     startDelaySeconds: DEFAULT_START_DELAY_SECONDS,
     hasCJK: false,
     progress: 0,
@@ -150,6 +155,10 @@ export class RSVPController extends EventTarget {
     const savedWarmupRamp = this.loadWarmupRampFromStorage();
     if (savedWarmupRamp !== null) {
       this.state.warmupRamp = savedWarmupRamp;
+    }
+    const savedSmoothFlashes = this.loadSmoothFlashesFromStorage();
+    if (savedSmoothFlashes !== null) {
+      this.state.smoothFlashes = savedSmoothFlashes;
     }
     const savedStartDelay = this.loadStartDelayFromStorage();
     if (savedStartDelay !== null) {
@@ -329,6 +338,26 @@ export class RSVPController extends EventTarget {
   private loadWarmupRampFromStorage(): boolean | null {
     try {
       const stored = localStorage.getItem(WARMUP_RAMP_KEY);
+      if (stored !== null) return stored === '1';
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  setSmoothFlashes(value: boolean): void {
+    this.state.smoothFlashes = value;
+    try {
+      localStorage.setItem(SMOOTH_FLASHES_KEY, value ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadSmoothFlashesFromStorage(): boolean | null {
+    try {
+      const stored = localStorage.getItem(SMOOTH_FLASHES_KEY);
       if (stored !== null) return stored === '1';
     } catch {
       /* ignore */
@@ -1309,10 +1338,14 @@ export class RSVPController extends EventTarget {
     // A chunk is held for the sum of its words' durations (so the closing word's
     // punctuation pause still applies); a single word uses its own duration,
     // which preserves hyphen-part timing.
-    const duration =
+    let duration =
       chunk.length > 1
         ? chunk.reduce((sum, w) => sum + this.getWordDisplayDuration(w, wpm), 0)
         : this.getWordDisplayDuration(this.currentDisplayWord!, wpm);
+    // Comfort mode: a small beat between chunks reinforces phrase grouping.
+    if (this.state.smoothFlashes && chunk.length > 1) {
+      duration += CHUNK_BEAT_MS;
+    }
 
     this.playbackTimer = setTimeout(() => {
       this.advanceToNextWord();

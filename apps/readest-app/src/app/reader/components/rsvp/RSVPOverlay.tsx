@@ -241,6 +241,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   });
   const contextWordRef = useRef<HTMLSpanElement>(null);
   const contextPanelRef = useRef<HTMLDivElement>(null);
+  const wordDisplayRef = useRef<HTMLDivElement>(null);
   // Dictionary lookup from a context-panel selection (#4475). `lookup` is the
   // pending selection (drives the "Look up" pill); `dict` holds the resolved
   // word + popup placement once the dictionary is open.
@@ -389,6 +390,16 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [controller]);
+
+  // Comfort mode: a subtle fade-in on each new word/chunk to soften the hard
+  // cut between flashes. Off by default; cheap and no-op where unsupported.
+  useEffect(() => {
+    if (!state.smoothFlashes) return;
+    wordDisplayRef.current?.animate?.([{ opacity: 0.45 }, { opacity: 1 }], {
+      duration: 45,
+      easing: 'ease-out',
+    });
+  }, [state.currentIndex, state.smoothFlashes]);
 
   const effectiveChapterHref = currentChapterHref;
 
@@ -946,6 +957,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
 
               {/* Word display */}
               <div
+                ref={wordDisplayRef}
                 className={clsx(
                   'rsvp-word relative flex min-h-16 w-full items-center justify-center whitespace-nowrap px-2 py-2 font-medium leading-none tracking-wide sm:min-h-20 sm:px-4 sm:py-4',
                   // Fall back to a fixed-width font only when the reader has no
@@ -1385,6 +1397,18 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 className='toggle'
                 checked={state.warmupRamp}
                 onChange={(e) => controller.setWarmupRamp(e.target.checked)}
+              />
+            </div>
+
+            {/* Smooth — comfort fade + small inter-chunk beat */}
+            <div className='config-item gap-2'>
+              <span className='opacity-50'>{_('Smooth')}</span>
+              <input
+                type='checkbox'
+                data-testid='rsvp-smooth-toggle'
+                className='toggle'
+                checked={state.smoothFlashes}
+                onChange={(e) => controller.setSmoothFlashes(e.target.checked)}
               />
             </div>
 
