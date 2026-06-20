@@ -81,8 +81,12 @@ const STORAGE_KEY_HIGHLIGHT_WORD = 'readest_rsvp_cjk_highlight_word';
 // would otherwise render tens of thousands of <span> elements and freeze the UI
 // for many seconds on each section load.
 const CONTEXT_CHUNK_SIZE = 50;
-const CONTEXT_WINDOW_BEFORE = 200;
-const CONTEXT_WINDOW_AFTER = 1000;
+// The window re-centres every CONTEXT_CHUNK_SIZE words, so a small look-ahead is
+// plenty for scrolling while keeping the initial mount cheap (the panel renders
+// one component per word — large windows cost hundreds of nodes on first paint,
+// which is a noticeable load stall on mobile).
+const CONTEXT_WINDOW_BEFORE = 60;
+const CONTEXT_WINDOW_AFTER = 120;
 
 // TTS rate options for the overlay's rate picker (decision 6) — mirrors the
 // 0.5–3.0 range the TTS panel slider clamps to, in 0.25 steps.
