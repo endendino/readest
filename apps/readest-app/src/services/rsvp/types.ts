@@ -5,6 +5,8 @@ export interface RsvpWord {
   range?: Range;
   docIndex?: number;
   cfi?: string; // Canonical Fragment Identifier for precise position tracking
+  node?: Node; // source text node + offset; the Range is built lazily (ensureRange)
+  startOffset?: number;
 }
 
 export interface RsvpState {

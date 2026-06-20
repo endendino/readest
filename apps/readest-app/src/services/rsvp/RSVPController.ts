@@ -378,10 +378,11 @@ export class RSVPController extends EventTarget {
     if (targetRange) {
       for (let i = 0; i < words.length; i++) {
         const word = words[i];
-        if (!word?.range) continue;
-        if (word.docIndex !== targetSpineIndex) continue;
+        if (!word || word.docIndex !== targetSpineIndex) continue;
+        const range = this.ensureRange(word);
+        if (!range) continue;
         try {
-          if (word.range.compareBoundaryPoints(Range.START_TO_START, targetRange) >= 0) {
+          if (range.compareBoundaryPoints(Range.START_TO_START, targetRange) >= 0) {
             return i;
           }
         } catch {
@@ -394,10 +395,12 @@ export class RSVPController extends EventTarget {
     // be resolved to a range — e.g. fixed-layout pages).
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
-      if (!word?.range || word.docIndex === undefined) continue;
+      if (!word || word.docIndex === undefined) continue;
+      const range = this.ensureRange(word);
+      if (!range) continue;
       let wordCfi: string | undefined;
       try {
-        wordCfi = this.view.getCFI(word.docIndex, word.range);
+        wordCfi = this.view.getCFI(word.docIndex, range);
       } catch {
         continue;
       }
@@ -441,10 +444,33 @@ export class RSVPController extends EventTarget {
     }
   }
 
-  private getCfiForWord(word: RsvpWord | undefined): string | undefined {
-    if (!word?.range || word.docIndex === undefined) return undefined;
+  // Ranges are built lazily: extraction stores each word's text node + offset
+  // (cheap), and the Range is created and cached only when a consumer needs it
+  // (CFI generation, TTS-sync comparison). This keeps section extraction — the
+  // RSVP open path — from creating tens of thousands of Ranges up front.
+  private ensureRange(word: RsvpWord | null | undefined): Range | undefined {
+    if (!word) return undefined;
+    if (word.range) return word.range;
+    const node = word.node;
+    if (!node || word.startOffset === undefined) return undefined;
     try {
-      return this.view.getCFI(word.docIndex, word.range);
+      const range = node.ownerDocument?.createRange();
+      if (!range) return undefined;
+      range.setStart(node, word.startOffset);
+      range.setEnd(node, word.startOffset + word.text.length);
+      word.range = range; // cache for reuse
+      return range;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private getCfiForWord(word: RsvpWord | undefined): string | undefined {
+    if (word?.docIndex === undefined) return undefined;
+    const range = this.ensureRange(word);
+    if (!range) return undefined;
+    try {
+      return this.view.getCFI(word.docIndex, range);
     } catch {
       return undefined;
     }
@@ -572,7 +598,7 @@ export class RSVPController extends EventTarget {
         wordIndex: this.state.currentIndex,
         totalWords: this.state.words.length,
         text: currentWord?.text || '',
-        range: currentWord?.range,
+        range: this.ensureRange(currentWord),
         docIndex: currentWord?.docIndex,
         cfi: this.getCfiForWord(currentWord),
       };
@@ -934,7 +960,7 @@ export class RSVPController extends EventTarget {
     // search backward; otherwise linear-scan forward from the cursor.
     let backward = false;
     if (cursor >= 0 && cursor < words.length) {
-      const cursorRange = words[cursor]?.range;
+      const cursorRange = this.ensureRange(words[cursor]);
       if (cursorRange && words[cursor]?.docIndex === targetSpineIndex) {
         try {
           // target.start < cursor.start  =>  cursor.start > target.start
@@ -970,8 +996,10 @@ export class RSVPController extends EventTarget {
     let firstFollowing = -1;
     for (let i = from; i < words.length; i++) {
       const word = words[i];
-      if (!word?.range || word.docIndex !== targetSpineIndex) continue;
-      const rel = this.compareWordToTarget(word.range, targetRange);
+      if (!word || word.docIndex !== targetSpineIndex) continue;
+      const range = this.ensureRange(word);
+      if (!range) continue;
+      const rel = this.compareWordToTarget(range, targetRange);
       if (rel === 0) return i; // contains the target start
       if (rel > 0 && firstFollowing < 0) firstFollowing = i; // first word after target
     }
@@ -991,12 +1019,13 @@ export class RSVPController extends EventTarget {
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
       const word = words[mid];
-      if (!word?.range || word.docIndex !== targetSpineIndex) {
-        // Ranges without a comparable range break ordering; fall back to a
-        // linear scan from the low bound.
+      const range = word && word.docIndex === targetSpineIndex ? this.ensureRange(word) : undefined;
+      if (!range) {
+        // No comparable range breaks ordering; fall back to a linear scan from
+        // the low bound.
         return this.linearScanWord(words, targetRange, targetSpineIndex, lo);
       }
-      const rel = this.compareWordToTarget(word.range, targetRange);
+      const rel = this.compareWordToTarget(range, targetRange);
       if (rel === 0) return mid;
       if (rel < 0) {
         // word is entirely before the target — search right.
@@ -1074,12 +1103,15 @@ export class RSVPController extends EventTarget {
     const words = this.extractWordsWithRanges();
 
     let newIndex = 0;
-    if (words.length > 0 && prevWord?.range && prevWord.docIndex !== undefined) {
+    const prevRange = this.ensureRange(prevWord);
+    if (words.length > 0 && prevRange && prevWord?.docIndex !== undefined) {
       for (let i = 0; i < words.length; i++) {
         const word = words[i];
-        if (!word?.range || word.docIndex !== prevWord.docIndex) continue;
+        if (!word || word.docIndex !== prevWord.docIndex) continue;
+        const range = this.ensureRange(word);
+        if (!range) continue;
         try {
-          if (word.range.compareBoundaryPoints(Range.START_TO_START, prevWord.range) >= 0) {
+          if (range.compareBoundaryPoints(Range.START_TO_START, prevRange) >= 0) {
             newIndex = i;
             break;
           }
@@ -1216,28 +1248,18 @@ export class RSVPController extends EventTarget {
           const wordStart = text.indexOf(word, offset);
           if (wordStart === -1) continue;
 
-          try {
-            const range = doc.createRange();
-            range.setStart(node, wordStart);
-            range.setEnd(node, wordStart + word.length);
-
-            // CFI is computed lazily — see savePositionToStorage(),
-            // stop(), and findWordIndexByCfi(). At 45k+ words/section,
-            // eager generation dominates extract time.
-            words.push({
-              text: word,
-              orpIndex: this.calculateORP(word),
-              pauseMultiplier: this.getPauseMultiplier(word),
-              range,
-              docIndex,
-            });
-          } catch {
-            words.push({
-              text: word,
-              orpIndex: this.calculateORP(word),
-              pauseMultiplier: this.getPauseMultiplier(word),
-            });
-          }
+          // Store the source node + offset only. Both the Range and the CFI are
+          // built lazily on demand (see ensureRange / getCfiForWord): at 45k+
+          // words/section, creating a Range per word here dominated the
+          // synchronous RSVP-open path, especially on mobile.
+          words.push({
+            text: word,
+            orpIndex: this.calculateORP(word),
+            pauseMultiplier: this.getPauseMultiplier(word),
+            node,
+            startOffset: wordStart,
+            docIndex,
+          });
 
           offset = wordStart + word.length;
         }
