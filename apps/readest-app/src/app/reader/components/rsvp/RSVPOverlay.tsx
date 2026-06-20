@@ -163,6 +163,9 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const currentWord = controller.currentDisplayWord;
   const currentChunk = controller.currentDisplayChunk;
   const isChunk = currentChunk.length > 1;
+  // RTL phrases must lay their words out right-to-left, not in the default LTR
+  // flex order, or a Hebrew/Arabic chunk reads backwards.
+  const chunkIsRTL = isChunk && currentChunk.some((w) => isRTLText(w.text));
   // The transport (center) play/pause controls TTS while read-along is engaged,
   // otherwise RSVP's own timer (#3235). A ref keeps the latest closure so the
   // capture-phase keyboard/tap effects don't need it in their dep arrays.
@@ -349,6 +352,23 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     document.addEventListener('keydown', handleKeyboard, { capture: true });
     return () => document.removeEventListener('keydown', handleKeyboard, { capture: true });
   }, [state.active, controller, onClose, dict, isSettingsDialogOpen]);
+
+  // Auto-pause when the tab/app loses focus, so the reader never plays on
+  // unseen and you don't lose your place.
+  useEffect(() => {
+    const pauseIfPlaying = () => {
+      if (controller.currentState.playing) controller.pause();
+    };
+    const onVisibility = () => {
+      if (document.hidden) pauseIfPlaying();
+    };
+    window.addEventListener('blur', pauseIfPlaying);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', pauseIfPlaying);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [controller]);
 
   const effectiveChapterHref = currentChapterHref;
 
@@ -919,7 +939,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 }}
               >
                 {isChunk ? (
-                  <div className='flex items-baseline justify-center gap-[0.4em]'>
+                  <div
+                    className='flex items-baseline justify-center gap-[0.4em]'
+                    dir={chunkIsRTL ? 'rtl' : undefined}
+                  >
                     {currentChunk.map((w, i) => {
                       const wordIndex = state.currentIndex + i;
                       const cjk = containsCJK(w.text);
