@@ -12,6 +12,7 @@ import {
   phraseChunkSize,
   warmupWpm,
   latinOrpIndex,
+  latinDwellMultiplier,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
@@ -102,6 +103,25 @@ describe('rsvp/utils', () => {
     test('returns the first letter for single-letter / empty input', () => {
       expect(latinOrpIndex('a')).toBe(0);
       expect(latinOrpIndex('')).toBe(0);
+    });
+  });
+
+  describe('latinDwellMultiplier', () => {
+    test('lingers on long words and hurries very short ones', () => {
+      expect(latinDwellMultiplier('extraordinary')).toBeCloseTo(1.35);
+      expect(latinDwellMultiplier('comprehend')).toBeCloseTo(1.15);
+      expect(latinDwellMultiplier('the')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('a')).toBeCloseTo(0.9);
+    });
+
+    test('adds dwell for numerals and all-caps acronyms', () => {
+      expect(latinDwellMultiplier('2024')).toBeCloseTo(1.3);
+      expect(latinDwellMultiplier('NASA')).toBeCloseTo(1.2);
+    });
+
+    test('ignores surrounding punctuation and caps the multiplier', () => {
+      expect(latinDwellMultiplier('"the,"')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('SUPERCALIFRAGILISTIC123')).toBeLessThanOrEqual(1.8);
     });
   });
 

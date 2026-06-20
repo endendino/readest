@@ -9,6 +9,7 @@ import {
   phraseChunkSize,
   warmupWpm,
   latinOrpIndex,
+  latinDwellMultiplier,
 } from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
@@ -1426,9 +1427,7 @@ export class RSVPController extends EventTarget {
       return 0.9; // Single characters
     }
 
-    if (word.length > 12) return 1.3;
-    if (word.length > 8) return 1.1;
-    return 1.0;
+    return latinDwellMultiplier(word);
   }
 
   private getWordDisplayDuration(word: RsvpWord, wpm: number): number {

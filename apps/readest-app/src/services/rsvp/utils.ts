@@ -462,3 +462,26 @@ export function latinOrpIndex(word: string): number {
 
   return start + pivot;
 }
+
+/**
+ * Dwell-time multiplier for a Latin-script word, used to linger on harder words.
+ * Combines length with intrinsic difficulty cues — numerals and all-caps tokens
+ * (acronyms / emphasis) are read more carefully — capped so no single word
+ * stalls the flow. Very short function words flash slightly faster.
+ */
+export function latinDwellMultiplier(word: string): number {
+  const core = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+  const len = core.length;
+
+  let m = 1.0;
+  if (len > 12) m = 1.35;
+  else if (len > 8) m = 1.15;
+  else if (len <= 2) m = 0.9;
+
+  if (/\d/.test(core)) m += 0.3; // numerals are read more carefully
+  if (core.length >= 2 && core === core.toUpperCase() && core !== core.toLowerCase()) {
+    m += 0.2; // ALL-CAPS acronyms / emphasis
+  }
+
+  return Math.min(m, 1.8);
+}
