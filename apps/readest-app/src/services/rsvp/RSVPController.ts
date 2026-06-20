@@ -1186,7 +1186,13 @@ export class RSVPController extends EventTarget {
       return this.cachedWords.words;
     }
 
+    const t0 = performance.now();
     const words = this.extractWordsFromElement(doc.body, doc, docIndex);
+    // TEMP perf instrumentation (remove before upstream PR): how long the
+    // synchronous section extraction takes on-device and how many words it built.
+    console.log(
+      `[RSVP perf] extracted ${words.length} words in ${(performance.now() - t0).toFixed(1)}ms`,
+    );
     this.cachedWords = { docIndex, doc, words };
     return words;
   }
@@ -1198,6 +1204,7 @@ export class RSVPController extends EventTarget {
   ): RsvpWord[] {
     const excludeTags = new Set(['SCRIPT', 'STYLE', 'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
     const words: RsvpWord[] = [];
+    const view = doc.defaultView;
 
     const walk = (node: Node): void => {
       if (node.nodeType === Node.TEXT_NODE) {
@@ -1241,11 +1248,15 @@ export class RSVPController extends EventTarget {
 
       const el = node as HTMLElement;
       if (excludeTags.has(el.tagName.toUpperCase())) return;
+      // Cheap fast-path before the layout-touching computed-style read.
+      if (el.hidden) return;
 
-      const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+      const style = view?.getComputedStyle(el);
       if (style?.display === 'none' || style?.visibility === 'hidden') return;
 
-      for (const child of Array.from(el.childNodes)) {
+      // Walk children directly: Array.from(childNodes) would allocate an array
+      // per element, and this runs for tens of thousands of nodes per section.
+      for (let child = el.firstChild; child; child = child.nextSibling) {
         walk(child);
       }
     };
