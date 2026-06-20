@@ -412,10 +412,15 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     });
   }, [state.currentIndex, state.smoothFlashes]);
 
-  // Keep the reader paused while the calibration ramp is shown; the start
-  // countdown gives this effect time to land before any real word is displayed.
+  // While the calibration ramp is shown, capture where to return to and pause
+  // the reader. Restoring the exact index on completion corrects any drift if
+  // the reader briefly advanced before this effect committed (e.g. 0s delay).
+  const calibrationReturn = useRef<{ index: number; wasPlaying: boolean } | null>(null);
   useEffect(() => {
-    if (showCalibration) controller.pause();
+    if (!showCalibration) return;
+    const s = controller.currentState;
+    calibrationReturn.current = { index: s.currentIndex, wasPlaying: s.playing };
+    controller.pause();
   }, [showCalibration, controller]);
 
   const handleCalibrationComplete = useCallback(
@@ -427,10 +432,27 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         /* ignore */
       }
       setShowCalibration(false);
-      controller.resume();
+      const ret = calibrationReturn.current;
+      calibrationReturn.current = null;
+      if (ret) {
+        controller.seekToIndex(ret.index);
+        if (ret.wasPlaying) controller.resume();
+      } else {
+        controller.resume();
+      }
     },
     [controller],
   );
+
+  // Safety: release press-and-hold slow-mo if the overlay unmounts mid-hold —
+  // the controller instance is reused across sessions, so a stuck flag would
+  // leak into the next one.
+  useEffect(() => {
+    return () => {
+      if (holdSlowTimer.current) clearTimeout(holdSlowTimer.current);
+      if (holdSlowActive.current) controller.setHoldSlow(false);
+    };
+  }, [controller]);
 
   const effectiveChapterHref = currentChapterHref;
 
@@ -571,14 +593,15 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     touchStartTime.current = Date.now();
 
     // Press-and-hold on the reading area engages slow-mo until release. The
-    // 300ms delay clears the tap window (taps are < 300ms), so taps still work.
-    // Skip the header/footer controls, which own their own gestures.
+    // 400ms delay keeps it clear of the tap window (taps are < 300ms), so a
+    // slightly slow tap stays a no-op rather than a slow-mo blip. Skip the
+    // header/footer controls, which own their own gestures.
     const target = event.target as HTMLElement;
     if (target.closest('.rsvp-controls') || target.closest('.rsvp-header')) return;
     holdSlowTimer.current = setTimeout(() => {
       holdSlowActive.current = true;
       controller.setHoldSlow(true);
-    }, 300);
+    }, 400);
   };
 
   const handleTouchMove = (event: React.TouchEvent) => {
@@ -829,6 +852,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={cancelHoldSlow}
     >
       {showCalibration && (
         <RSVPCalibration

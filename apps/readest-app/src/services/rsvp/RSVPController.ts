@@ -1485,15 +1485,19 @@ export class RSVPController extends EventTarget {
       // A block-level box begins a new paragraph; the next word pushed becomes a
       // paragraph start. Reuses the computed style above (no extra layout cost).
       const display = style?.display;
-      if (display && display !== 'contents' && !display.startsWith('inline')) {
-        pendingParagraphBreak = true;
-      }
+      const isBlock = !!display && display !== 'contents' && !display.startsWith('inline');
+      if (isBlock) pendingParagraphBreak = true;
 
       // Walk children directly: Array.from(childNodes) would allocate an array
       // per element, and this runs for tens of thousands of nodes per section.
       for (let child = el.firstChild; child; child = child.nextSibling) {
         walk(child);
       }
+
+      // Text that follows this block (back in the parent's flow, e.g. the tail
+      // of "<div>...<ul>...</ul>tail</div>") begins a new paragraph too — re-arm
+      // on exit so it is flagged isParagraphStart.
+      if (isBlock) pendingParagraphBreak = true;
     };
 
     walk(element);
