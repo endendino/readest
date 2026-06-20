@@ -1218,13 +1218,7 @@ export class RSVPController extends EventTarget {
       return this.cachedWords.words;
     }
 
-    const t0 = performance.now();
     const words = this.extractWordsFromElement(doc.body, doc, docIndex);
-    // TEMP perf instrumentation (remove before upstream PR): how long the
-    // synchronous section extraction takes on-device and how many words it built.
-    console.log(
-      `[RSVP perf] extracted ${words.length} words in ${(performance.now() - t0).toFixed(1)}ms`,
-    );
     this.cachedWords = { docIndex, doc, words };
     return words;
   }
