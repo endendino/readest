@@ -166,6 +166,26 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   // RTL phrases must lay their words out right-to-left, not in the default LTR
   // flex order, or a Hebrew/Arabic chunk reads backwards.
   const chunkIsRTL = isChunk && currentChunk.some((w) => isRTLText(w.text));
+  // Spritz-style fixation ticks above and below the ORP letter. In a chunk they
+  // appear once, on the longest word, to anchor the eye without clutter.
+  const longestChunkIdx = isChunk
+    ? currentChunk.reduce(
+        (best, w, i) => (w.text.length > (currentChunk[best]?.text.length ?? 0) ? i : best),
+        0,
+      )
+    : 0;
+  const orpTicks = (
+    <>
+      <span
+        aria-hidden
+        className='pointer-events-none absolute bottom-full left-1/2 h-[0.22em] w-px -translate-x-1/2 bg-current opacity-50'
+      />
+      <span
+        aria-hidden
+        className='pointer-events-none absolute top-full left-1/2 h-[0.22em] w-px -translate-x-1/2 bg-current opacity-50'
+      />
+    </>
+  );
   // The transport (center) play/pause controls TTS while read-along is engaged,
   // otherwise RSVP's own timer (#3235). A ref keeps the latest closure so the
   // capture-phase keyboard/tap effects don't need it in their dep arrays.
@@ -966,9 +986,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                         <span key={wordIndex} className='opacity-60'>
                           {before}
                           <span
-                            className='font-bold opacity-100'
+                            className='relative font-bold opacity-100'
                             style={{ color: effectiveOrpColor }}
                           >
+                            {i === longestChunkIdx && orpTicks}
                             {orp}
                           </span>
                           {after}
@@ -1002,6 +1023,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                         className='rsvp-word-orp relative z-10 font-bold'
                         style={{ color: effectiveOrpColor }}
                       >
+                        {orpTicks}
                         {orpChar}
                       </span>
                       <span
