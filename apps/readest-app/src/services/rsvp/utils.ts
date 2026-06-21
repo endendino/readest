@@ -373,3 +373,34 @@ export function splitTextIntoWords(text: string, language?: string, cjkCharMode 
 
   return words.filter((w) => w.trim().length > 0);
 }
+
+/**
+ * How many of the leading words form the next phrase chunk, given a character
+ * budget. Packs words until adding the next would exceed the budget (counting a
+ * joining space), always returns at least 1, never extends past a word ending in
+ * sentence/clause punctuation (so a chunk never flashes across a clause break),
+ * and pulls in a second word when the first is a short function word so it is
+ * not stranded alone. Returns 0 for no words.
+ */
+export function phraseChunkSize(wordTexts: string[], budget: number): number {
+  if (wordTexts.length === 0) return 0;
+
+  let count = 0;
+  let width = 0;
+  for (let i = 0; i < wordTexts.length; i++) {
+    const word = wordTexts[i]!;
+    const add = (count === 0 ? 0 : 1) + word.length; // +1 for the joining space
+    if (count > 0 && width + add > budget) break;
+    count++;
+    width += add;
+    if (/[.!?,;:]$/.test(word)) break;
+  }
+
+  // Don't strand a lone short function word ("the", "of", …): pull in the next.
+  if (count === 1 && wordTexts.length > 1) {
+    const first = wordTexts[0]!;
+    if (first.length <= 3 && !/[.!?,;:]$/.test(first)) count = 2;
+  }
+
+  return count;
+}

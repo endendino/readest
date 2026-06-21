@@ -157,6 +157,11 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const isSettingsDialogOpen = useSettingsStore((s) => s.isSettingsDialogOpen);
   const [state, setState] = useState<RsvpState>(controller.currentState);
   const currentWord = controller.currentDisplayWord;
+  const currentChunk = controller.currentDisplayChunk;
+  const isChunk = currentChunk.length > 1;
+  // RTL phrases must lay their words out right-to-left, not in the default LTR
+  // flex order, or a Hebrew/Arabic chunk reads backwards.
+  const chunkIsRTL = isChunk && currentChunk.some((w) => isRTLText(w.text));
   // The transport (center) play/pause controls TTS while read-along is engaged,
   // otherwise RSVP's own timer (#3235). A ref keeps the latest closure so the
   // capture-phase keyboard/tap effects don't need it in their dep arrays.
@@ -975,7 +980,45 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                   fontFamily,
                 }}
               >
-                {currentWord ? (
+                {isChunk ? (
+                  <div
+                    className='flex items-baseline justify-center gap-[0.4em]'
+                    dir={chunkIsRTL ? 'rtl' : undefined}
+                  >
+                    {currentChunk.map((w, i) => {
+                      const wordIndex = state.currentIndex + i;
+                      const cjk = containsCJK(w.text);
+                      const rtl = isRTLText(w.text);
+                      if (rtl || (cjk && highlightWholeWord)) {
+                        return (
+                          <span
+                            key={wordIndex}
+                            className='font-bold'
+                            style={{ color: effectiveOrpColor }}
+                            dir={rtl ? 'rtl' : undefined}
+                          >
+                            {w.text}
+                          </span>
+                        );
+                      }
+                      const before = w.text.substring(0, w.orpIndex);
+                      const orp = w.text.charAt(w.orpIndex);
+                      const after = w.text.substring(w.orpIndex + 1);
+                      return (
+                        <span key={wordIndex} className='opacity-60'>
+                          {before}
+                          <span
+                            className='font-bold opacity-100'
+                            style={{ color: effectiveOrpColor }}
+                          >
+                            {orp}
+                          </span>
+                          {after}
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : currentWord ? (
                   isRTLWord || (isCJKWord && highlightWholeWord) ? (
                     // Whole-word mode: center the full word and color it, instead
                     // of anchoring a single focus character. Used for CJK Highlight
@@ -1259,6 +1302,18 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               >
                 <IoAdd className='h-3 w-3' />
               </button>
+            </div>
+
+            {/* Phrase chunking — flash intelligent multi-word phrases */}
+            <div className='config-item gap-2'>
+              <span className='opacity-50'>{_('Chunking')}</span>
+              <input
+                type='checkbox'
+                data-testid='rsvp-chunking-toggle'
+                className='toggle'
+                checked={state.chunking}
+                onChange={(e) => controller.setChunking(e.target.checked)}
+              />
             </div>
 
             {/* Split hyphenated words */}

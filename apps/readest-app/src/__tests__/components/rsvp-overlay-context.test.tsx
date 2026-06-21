@@ -56,6 +56,7 @@ const buildState = (overrides: Partial<RsvpState> = {}): RsvpState => ({
   punctuationPauseMs: 100,
   splitHyphens: false,
   cjkCharMode: false,
+  chunking: false,
   startDelaySeconds: 3,
   hasCJK: false,
   progress: 0,
@@ -70,6 +71,10 @@ const buildController = (state: RsvpState) => {
     },
     get currentDisplayWord() {
       return state.words[state.currentIndex] ?? null;
+    },
+    get currentDisplayChunk() {
+      const w = state.words[state.currentIndex];
+      return w ? [w] : [];
     },
     get currentCountdown() {
       return null;
@@ -89,6 +94,7 @@ const buildController = (state: RsvpState) => {
     setPunctuationPause: vi.fn(),
     setSplitHyphens: vi.fn(),
     setCjkCharMode: vi.fn(),
+    setChunking: vi.fn(),
     setStartDelay: vi.fn(),
     getWpmOptions: vi.fn(() => [100, 200, 300]),
     getPunctuationPauseOptions: vi.fn(() => [25, 50, 100]),

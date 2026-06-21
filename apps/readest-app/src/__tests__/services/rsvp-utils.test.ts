@@ -8,9 +8,30 @@ import {
   segmentCJKText,
   splitTextIntoWords,
   getHyphenParts,
+  phraseChunkSize,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
+  describe('phraseChunkSize', () => {
+    test('packs words up to the character budget', () => {
+      expect(phraseChunkSize(['The', 'quick', 'brown', 'fox'], 14)).toBe(2);
+    });
+
+    test('breaks after clause/sentence punctuation', () => {
+      expect(phraseChunkSize(['brown', 'fox,', 'jumped'], 14)).toBe(2);
+      expect(phraseChunkSize(['end.', 'New', 'one'], 14)).toBe(1);
+    });
+
+    test('does not strand a lone short function word', () => {
+      expect(phraseChunkSize(['the', 'extraordinary'], 14)).toBe(2);
+    });
+
+    test('always returns at least 1 word, or 0 for none', () => {
+      expect(phraseChunkSize(['single'], 14)).toBe(1);
+      expect(phraseChunkSize([], 14)).toBe(0);
+    });
+  });
+
   describe('isCJK', () => {
     test('returns true for CJK Unified Ideographs', () => {
       expect(isCJK('\u4e00')).toBe(true); // first CJK character

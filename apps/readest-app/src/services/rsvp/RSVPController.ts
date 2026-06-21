@@ -1,6 +1,12 @@
 import { FoliateView } from '@/types/view';
 import { RsvpWord, RsvpState, RsvpPosition, RsvpStopPosition, RsvpStartChoice } from './types';
-import { containsCJK, isCJKPunctuation, splitTextIntoWords, getHyphenParts } from './utils';
+import {
+  containsCJK,
+  isCJKPunctuation,
+  splitTextIntoWords,
+  getHyphenParts,
+  phraseChunkSize,
+} from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
 import { isRangeLike } from '@/utils/range';
@@ -13,6 +19,11 @@ const DEFAULT_PUNCTUATION_PAUSE_MS = 100;
 const PUNCTUATION_PAUSE_OPTIONS = [25, 50, 75, 100, 125, 150, 175, 200];
 const DEFAULT_SPLIT_HYPHENS = false;
 const DEFAULT_CJK_CHAR_MODE = false;
+const DEFAULT_CHUNKING = false;
+// Phrase-chunk packing: target display width in characters and how many words
+// ahead to consider when forming one chunk.
+const CHUNK_CHAR_BUDGET = 14;
+const MAX_CHUNK_LOOKAHEAD = 8;
 const DEFAULT_START_DELAY_SECONDS = 3;
 const START_DELAY_OPTIONS = [0, 1, 2, 3];
 
@@ -34,6 +45,7 @@ const PUNCTUATION_PAUSE_KEY_PREFIX = 'readest_rsvp_pause_';
 const POSITION_KEY_PREFIX = 'readest_rsvp_pos_';
 const SPLIT_HYPHENS_KEY = 'readest_rsvp_split_hyphens';
 const CJK_CHAR_MODE_KEY = 'readest_rsvp_cjk_char_mode';
+const CHUNKING_KEY = 'readest_rsvp_chunking';
 const START_DELAY_KEY = 'readest_rsvp_start_delay';
 
 // Section-only CFI (no '!') sorts before any word CFI in that section.
@@ -55,6 +67,7 @@ export class RSVPController extends EventTarget {
     punctuationPauseMs: DEFAULT_PUNCTUATION_PAUSE_MS,
     splitHyphens: DEFAULT_SPLIT_HYPHENS,
     cjkCharMode: DEFAULT_CJK_CHAR_MODE,
+    chunking: DEFAULT_CHUNKING,
     startDelaySeconds: DEFAULT_START_DELAY_SECONDS,
     hasCJK: false,
     progress: 0,
@@ -116,6 +129,10 @@ export class RSVPController extends EventTarget {
     if (savedCjkCharMode !== null) {
       this.state.cjkCharMode = savedCjkCharMode;
     }
+    const savedChunking = this.loadChunkingFromStorage();
+    if (savedChunking !== null) {
+      this.state.chunking = savedChunking;
+    }
     const savedStartDelay = this.loadStartDelayFromStorage();
     if (savedStartDelay !== null) {
       this.state.startDelaySeconds = savedStartDelay;
@@ -137,10 +154,39 @@ export class RSVPController extends EventTarget {
     return null;
   }
 
+  // Phrase chunking is disabled while an external driver (TTS sync) owns
+  // advancement, since that path is inherently word-by-word.
+  private get effectiveChunking(): boolean {
+    return this.state.chunking && !this.#externallyDriven;
+  }
+
+  // How many words the flash starting at the current index covers: 1, unless
+  // chunking is on, in which case an intelligent phrase chunk (char-budget +
+  // clause-aware) is formed.
+  private currentChunkSize(): number {
+    if (!this.effectiveChunking) return 1;
+    const texts = this.state.words
+      .slice(this.state.currentIndex, this.state.currentIndex + MAX_CHUNK_LOOKAHEAD)
+      .map((w) => w.text);
+    return Math.max(1, phraseChunkSize(texts, CHUNK_CHAR_BUDGET));
+  }
+
+  // The real words shown in the current flash, each keeping its own orpIndex.
+  // A single-word flash returns one word; the overlay renders length > 1 inline
+  // with real spaces, so nothing is joined and no space is ever lost.
+  get currentDisplayChunk(): RsvpWord[] {
+    const word = this.currentWord;
+    if (!word) return [];
+    const size = this.currentChunkSize();
+    if (size <= 1) return [word];
+    return this.state.words.slice(this.state.currentIndex, this.state.currentIndex + size);
+  }
+
   get currentDisplayWord(): RsvpWord | null {
     const word = this.currentWord;
     if (!word) return null;
-    if (!this.state.splitHyphens) return word;
+    // Hyphen-part display only applies to plain single-word reading.
+    if (this.effectiveChunking || !this.state.splitHyphens) return word;
     const parts = getHyphenParts(word.text);
     if (parts.length <= 1) return word;
     const partText = parts[this.state.currentPartIndex] ?? word.text;
@@ -253,6 +299,26 @@ export class RSVPController extends EventTarget {
   private loadCjkCharModeFromStorage(): boolean | null {
     try {
       const stored = localStorage.getItem(CJK_CHAR_MODE_KEY);
+      if (stored !== null) return stored === '1';
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  setChunking(value: boolean): void {
+    this.state.chunking = value;
+    try {
+      localStorage.setItem(CHUNKING_KEY, value ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadChunkingFromStorage(): boolean | null {
+    try {
+      const stored = localStorage.getItem(CHUNKING_KEY);
       if (stored !== null) return stored === '1';
     } catch {
       /* ignore */
@@ -1123,8 +1189,14 @@ export class RSVPController extends EventTarget {
       return;
     }
 
-    const displayWord = this.currentDisplayWord!;
-    const duration = this.getWordDisplayDuration(displayWord, this.state.wpm);
+    const wpm = this.state.wpm;
+    const chunk = this.currentDisplayChunk;
+    // A chunk is held for the sum of its words' durations; a single word uses
+    // its own duration, which preserves hyphen-part timing.
+    const duration =
+      chunk.length > 1
+        ? chunk.reduce((sum, w) => sum + this.getWordDisplayDuration(w, wpm), 0)
+        : this.getWordDisplayDuration(this.currentDisplayWord!, wpm);
 
     this.playbackTimer = setTimeout(() => {
       this.advanceToNextWord();
@@ -1132,8 +1204,11 @@ export class RSVPController extends EventTarget {
   }
 
   private advanceToNextWord(): void {
+    const chunkSize = this.currentChunkSize();
+
+    // Hyphen-part stepping only applies to plain single-word reading.
     const word = this.currentWord;
-    if (word && this.state.splitHyphens) {
+    if (!this.effectiveChunking && word && this.state.splitHyphens) {
       const parts = getHyphenParts(word.text);
       if (this.state.currentPartIndex < parts.length - 1) {
         this.state.currentPartIndex += 1;
@@ -1143,7 +1218,7 @@ export class RSVPController extends EventTarget {
       }
     }
 
-    const newIndex = this.state.currentIndex + 1;
+    const newIndex = this.state.currentIndex + chunkSize;
 
     if (newIndex >= this.state.words.length) {
       this.dispatchEvent(new CustomEvent('rsvp-request-next-page'));
