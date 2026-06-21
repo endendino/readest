@@ -9,6 +9,7 @@ import {
   splitTextIntoWords,
   getHyphenParts,
   punctuationPauseScale,
+  latinDwellMultiplier,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
@@ -28,6 +29,25 @@ describe('rsvp/utils', () => {
 
     test('is 0 for a word with no trailing pause punctuation', () => {
       expect(punctuationPauseScale('word')).toBe(0);
+    });
+  });
+
+  describe('latinDwellMultiplier', () => {
+    test('lingers on long words and hurries very short ones', () => {
+      expect(latinDwellMultiplier('extraordinary')).toBeCloseTo(1.35);
+      expect(latinDwellMultiplier('comprehend')).toBeCloseTo(1.15);
+      expect(latinDwellMultiplier('the')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('a')).toBeCloseTo(0.9);
+    });
+
+    test('adds dwell for numerals and all-caps acronyms', () => {
+      expect(latinDwellMultiplier('2024')).toBeCloseTo(1.3);
+      expect(latinDwellMultiplier('NASA')).toBeCloseTo(1.2);
+    });
+
+    test('ignores surrounding punctuation and caps the multiplier', () => {
+      expect(latinDwellMultiplier('"the,"')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('SUPERCALIFRAGILISTIC123')).toBeLessThanOrEqual(1.8);
     });
   });
 
