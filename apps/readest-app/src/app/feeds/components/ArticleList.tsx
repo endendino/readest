@@ -9,7 +9,7 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { eventDispatcher } from '@/utils/event';
 import { navigateToReader } from '@/utils/nav';
-import { articleToFile } from '@/services/freshrss/articleDoc';
+import { articleToCachePath } from '@/services/freshrss/articleDoc';
 import type { FreshRSSArticle } from '@/types/freshrss';
 
 const snippet = (html: string) =>
@@ -34,10 +34,12 @@ export const ArticleList = () => {
     setOpening(a.id);
     try {
       const appService = await envConfig.getAppService();
-      const file = await articleToFile(a);
+      // Stage the EPUB in OPFS Cache and import it transiently *by path*
+      // (a transient File is rejected; Cache keeps it out of Books/ so it is
+      // never persisted to the library or WebDAV-synced).
+      const path = await articleToCachePath(a, appService);
       const { library, setLibrary } = useLibraryStore.getState();
-      // Transient: loaded directly, never persisted to the library or synced.
-      const book = await appService.importBook(file, library, { transient: true });
+      const book = await appService.importBook(path, library, { transient: true });
       if (!book) throw new Error('import returned no book');
       // Commit to the store so the reader can resolve the book by hash
       // (mirrors the OPDS page-streaming open flow).
