@@ -13,9 +13,6 @@ import {
   IoPlay,
   IoPause,
   IoPlaySkipBack,
-  IoPlaySkipForward,
-  IoCaretBack,
-  IoCaretForward,
   IoRemove,
   IoAdd,
   IoChevronDown,
@@ -1192,7 +1189,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         </button>
         {!contextCollapsed && (
           <div
-            className='max-h-[20vh] overflow-y-auto px-3 pb-3 md:px-4 md:pb-4'
+            className='max-h-[16vh] overflow-y-auto px-3 pb-3 md:px-4 md:pb-4'
             onTouchStart={(e) => e.stopPropagation()}
             onTouchEnd={(e) => e.stopPropagation()}
           >
@@ -1200,6 +1197,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               ref={contextPanelRef}
               data-testid='rsvp-context-panel'
               className='select-text text-left text-base leading-loose md:text-lg'
+              style={{ fontFamily }}
               onClick={handleContextClick}
               onKeyDown={handleContextKeyDown}
               onMouseUp={handleContextSelection}
@@ -1293,31 +1291,12 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           </button>
 
           <button
-            aria-label={_('Skip back 15 words')}
-            className='flex cursor-pointer items-center gap-0.5 rounded-full border-none bg-transparent px-2 py-1.5 transition-colors hover:bg-gray-500/20 active:scale-95'
-            onClick={() => controller.skipBackward(15)}
-            title={_('Back 15 words (Shift+Left)')}
-          >
-            <span className='text-xs font-semibold opacity-80'>15</span>
-            <IoPlaySkipBack className='h-5 w-5 md:h-6 md:w-6' />
-          </button>
-
-          <button
             aria-label={_('Decrease speed')}
             className='flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-transparent transition-colors hover:bg-gray-500/20 active:scale-95'
             onClick={() => controller.decreaseSpeed()}
             title={_('Slower (Left/Down)')}
           >
             <IoRemove className='h-4 w-4 md:h-5 md:w-5' />
-          </button>
-
-          <button
-            aria-label={_('Previous word')}
-            className='flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-transparent transition-colors hover:bg-gray-500/20 active:scale-95'
-            onClick={() => controller.prevWord()}
-            title={_('Previous word (,)')}
-          >
-            <IoCaretBack className='h-4 w-4 md:h-5 md:w-5' />
           </button>
 
           <button
@@ -1337,31 +1316,12 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           </button>
 
           <button
-            aria-label={_('Next word')}
-            className='flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-transparent transition-colors hover:bg-gray-500/20 active:scale-95'
-            onClick={() => controller.nextWord()}
-            title={_('Next word (.)')}
-          >
-            <IoCaretForward className='h-4 w-4 md:h-5 md:w-5' />
-          </button>
-
-          <button
             aria-label={_('Increase speed')}
             className='flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none bg-transparent transition-colors hover:bg-gray-500/20 active:scale-95'
             onClick={() => controller.increaseSpeed()}
             title={_('Faster (Right/Up)')}
           >
             <IoAdd className='h-4 w-4 md:h-5 md:w-5' />
-          </button>
-
-          <button
-            aria-label={_('Skip forward 15 words')}
-            className='flex cursor-pointer items-center gap-0.5 rounded-full border-none bg-transparent px-2 py-1.5 transition-colors hover:bg-gray-500/20 active:scale-95'
-            onClick={() => controller.skipForward(15)}
-            title={_('Forward 15 words (Shift+Right)')}
-          >
-            <IoPlaySkipForward className='h-5 w-5 md:h-6 md:w-6' />
-            <span className='text-xs font-semibold opacity-80'>15</span>
           </button>
 
           {/* Trailing cluster: audio (TTS) toggle + divider + settings gear.

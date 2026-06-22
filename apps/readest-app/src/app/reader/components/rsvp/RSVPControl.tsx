@@ -1021,11 +1021,16 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
   const chapters = bookData?.bookDoc?.toc || [];
   const currentChapterHref = rsvpChapterHrefRef.current ?? progress?.sectionHref ?? null;
 
-  // Mirror the reader's font face/family settings on the RSVP word. The overlay
-  // renders in the top document where the configured (and custom) fonts are
-  // already mounted, so the resolved family resolves the same typeface.
+  // RSVP uses high-legibility fonts regardless of the reader's body font:
+  // Atkinson Hyperlegible for Latin, Heebo for Hebrew. Atkinson has no Hebrew
+  // glyphs, so the browser falls through to Heebo per-glyph — no language
+  // detection needed. The reader's resolved base font stays as a final fallback
+  // (e.g. CJK), mirroring the configured/custom typefaces mounted in the overlay.
   const viewSettings = getViewSettings(bookKey);
-  const fontFamily = viewSettings ? getBaseFontFamily(viewSettings) : undefined;
+  const baseFontFamily = viewSettings ? getBaseFontFamily(viewSettings) : undefined;
+  const fontFamily = baseFontFamily
+    ? `'Atkinson Hyperlegible', 'Heebo', ${baseFontFamily}`
+    : `'Atkinson Hyperlegible', 'Heebo', sans-serif`;
 
   // Book language drives dictionary provider selection for context lookups (#4475).
   const dictionaryLang = bookData?.bookDoc?.metadata?.language as string | undefined;
