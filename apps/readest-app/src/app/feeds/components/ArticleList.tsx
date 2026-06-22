@@ -1,8 +1,16 @@
 'use client';
 
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useLibraryStore } from '@/store/libraryStore';
 import { useFeedsStore } from '@/store/feedsStore';
+import { eventDispatcher } from '@/utils/event';
+import { navigateToReader } from '@/utils/nav';
+import { articleToFile } from '@/services/freshrss/articleDoc';
+import type { FreshRSSArticle } from '@/types/freshrss';
 
 const snippet = (html: string) =>
   html
@@ -13,9 +21,33 @@ const snippet = (html: string) =>
 
 export const ArticleList = () => {
   const _ = useTranslation();
+  const router = useRouter();
+  const { appService } = useEnv();
   const { settings } = useSettingsStore();
-  const { articles, loading, error, continuation, loadMore } = useFeedsStore();
+  const { articles, loading, error, continuation, loadMore, currentStreamId, rememberOpenArticle } =
+    useFeedsStore();
+  const [opening, setOpening] = useState<string | null>(null);
   const fr = settings.freshrss;
+
+  const openArticle = async (a: FreshRSSArticle) => {
+    if (!appService || opening) return;
+    setOpening(a.id);
+    try {
+      const file = await articleToFile(a);
+      const { library } = useLibraryStore.getState();
+      // Transient: loaded directly, never persisted to the library or synced.
+      const book = await appService.importBook(file, library, { transient: true });
+      if (!book) throw new Error('import returned no book');
+      rememberOpenArticle(book.hash, a.id, currentStreamId ?? '');
+      navigateToReader(router, [book.hash]);
+    } catch (e) {
+      eventDispatcher.dispatch('toast', {
+        message: _('Could not open article: {{error}}', { error: String(e) }),
+        type: 'error',
+      });
+      setOpening(null);
+    }
+  };
 
   if (loading && articles.length === 0) {
     return (
@@ -34,10 +66,16 @@ export const ArticleList = () => {
   return (
     <div className='divide-base-200 divide-y'>
       {articles.map((a) => (
-        // Phase 3 makes this row open the article (transient doc + RSVP).
-        <div key={a.id} className='flex flex-col gap-1 px-4 py-3'>
-          <span className='font-medium' dir='auto'>
-            {a.title}
+        <button
+          key={a.id}
+          type='button'
+          onClick={() => void openArticle(a)}
+          disabled={opening !== null}
+          className='hover:bg-base-200/50 flex w-full flex-col gap-1 px-4 py-3 text-left disabled:opacity-60'
+        >
+          <span className='flex items-center gap-2 font-medium'>
+            {opening === a.id && <span className='loading loading-spinner loading-xs flex-shrink-0' />}
+            <span dir='auto'>{a.title}</span>
           </span>
           <span className='text-base-content/50 text-xs' dir='auto'>
             {a.feedTitle}
@@ -46,7 +84,7 @@ export const ArticleList = () => {
           <span className='text-base-content/60 line-clamp-2 text-sm' dir='auto'>
             {snippet(a.contentHtml)}
           </span>
-        </div>
+        </button>
       ))}
       {continuation && (
         <button
