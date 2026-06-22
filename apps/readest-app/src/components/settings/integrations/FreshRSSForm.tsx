@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -18,6 +19,7 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
   const _ = useTranslation();
   const { envConfig } = useEnv();
   const { settings, setSettings, saveSettings } = useSettingsStore();
+  const router = useRouter();
 
   const fr = settings.freshrss;
   const [serverUrl, setServerUrl] = useState(fr?.serverUrl ?? '');
@@ -202,6 +204,18 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
                 />
               </label>
             </div>
+          </div>
+        )}
+
+        {isConfigured && (
+          <div className='flex justify-end'>
+            <button
+              type='button'
+              onClick={() => router.push('/feeds')}
+              className='btn btn-primary h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium'
+            >
+              {_('Open Feeds')}
+            </button>
           </div>
         )}
 
