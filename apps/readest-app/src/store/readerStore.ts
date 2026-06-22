@@ -18,6 +18,7 @@ import {
   openPseStreamBook,
   parsePseStreamFileName,
 } from '@/services/opds/pseStream';
+import { useFeedsStore } from '@/store/feedsStore';
 import { BOOK_NAV_VERSION, computeBookNav, hydrateBookNav, updateToc } from '@/services/nav';
 import { formatTitle, getMetadataHash, getPrimaryLanguage } from '@/utils/book';
 import { getBaseFilename } from '@/utils/path';
@@ -281,6 +282,8 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
       }));
       const configViewSettings = config.viewSettings!;
       const globalViewSettings = settings.globalViewSettings;
+      // FreshRSS articles default to scroll mode (short, scroll-y content).
+      const isFeedArticle = !!useFeedsStore.getState().openArticles[id];
       set((state) => ({
         viewStates: {
           ...state.viewStates,
@@ -298,7 +301,11 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
             syncing: false,
             gridInsets: null,
             previewMode: false,
-            viewSettings: { ...globalViewSettings, ...configViewSettings },
+            viewSettings: {
+              ...globalViewSettings,
+              ...configViewSettings,
+              ...(isFeedArticle ? { scrolled: true } : {}),
+            },
           },
         },
       }));
