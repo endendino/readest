@@ -135,7 +135,7 @@ export async function buildEpub(
     <title>${escapeXml(chapter.title)}</title>
     <link rel="stylesheet" type="text/css" href="../style.css"/>
   </head>
-  <body>${chapter.html}</body>
+  <body dir="auto">${chapter.html}</body>
 </html>`;
     await zipWriter.add(`OEBPS/chapter${i + 1}.xhtml`, new TextReader(xhtml), zipWriteOptions);
   }
