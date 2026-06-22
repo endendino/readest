@@ -164,6 +164,18 @@ export async function buildEpub(
     .filter((line) => line.length > 0)
     .join('\n    ');
 
+  // RTL page progression (page-turn direction + left/right keys). dir="auto" on
+  // <body> only fixes text alignment; the spine attribute is what makes the
+  // reader treat the book as RTL. Detect from content (Hebrew/Arabic ranges).
+  const rtlSample = chapters
+    .map((c) => c.html)
+    .join(' ')
+    .replace(/<[^>]+>/g, '')
+    .slice(0, 1000);
+  const rtlCount = (rtlSample.match(/[֐-ࣿ]/g) || []).length;
+  const ltrCount = (rtlSample.match(/[A-Za-z]/g) || []).length;
+  const pageDir = rtlCount > ltrCount ? ' page-progression-direction="rtl"' : '';
+
   const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -178,7 +190,7 @@ export async function buildEpub(
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="css" href="style.css" media-type="text/css"/>
   </manifest>
-  <spine toc="ncx">
+  <spine toc="ncx"${pageDir}>
     ${spine}
   </spine>
 </package>`;
