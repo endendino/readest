@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { eventDispatcher } from '@/utils/event';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import type { FreshRSSSettings } from '@/types/settings';
+import type { FreshRSSFolder, FreshRSSFeed } from '@/types/freshrss';
 import SubPageHeader from '../SubPageHeader';
 import { SectionTitle, SettingLabel, Tips } from '../primitives';
 
@@ -23,6 +24,8 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
   const [username, setUsername] = useState(fr?.username ?? '');
   const [apiPassword, setApiPassword] = useState(fr?.apiPassword ?? '');
   const [isTesting, setIsTesting] = useState(false);
+  const [result, setResult] = useState<{ folders: FreshRSSFolder[]; feeds: FreshRSSFeed[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const persist = async (next: Partial<FreshRSSSettings>) => {
     const newSettings = { ...settings, freshrss: { ...settings.freshrss, ...next } };
@@ -32,6 +35,8 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
 
   const handleTestAndSave = async () => {
     setIsTesting(true);
+    setError(null);
+    setResult(null);
     try {
       const client = new FreshRSSClient({
         serverUrl: serverUrl.trim(),
@@ -39,21 +44,11 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
         apiPassword,
       });
       const { folders, feeds } = await client.listFoldersAndFeeds();
-      const unread = feeds.reduce((n, f) => n + f.unreadCount, 0);
+      setResult({ folders, feeds });
       await persist({ enabled: true, serverUrl: serverUrl.trim(), username: username.trim(), apiPassword });
-      eventDispatcher.dispatch('toast', {
-        message: _('Connected — {{folders}} folders, {{feeds}} feeds, {{unread}} unread', {
-          folders: folders.length,
-          feeds: feeds.length,
-          unread,
-        }),
-        type: 'info',
-      });
     } catch (e) {
-      eventDispatcher.dispatch('toast', {
-        message: _('FreshRSS connection failed: {{error}}', { error: String(e) }),
-        type: 'error',
-      });
+      setError(String(e));
+      eventDispatcher.dispatch('toast', { message: _('FreshRSS connection failed'), type: 'error' });
     } finally {
       setIsTesting(false);
     }
@@ -61,6 +56,7 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
 
   const canTest = !!serverUrl.trim() && !!username.trim() && !!apiPassword;
   const isConfigured = !!fr?.serverUrl && !!fr?.apiPassword;
+  const unreadTotal = result?.feeds.reduce((n, f) => n + f.unreadCount, 0) ?? 0;
 
   return (
     <div className='w-full'>
@@ -139,6 +135,41 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
             )}
           </button>
         </div>
+
+        {error && (
+          <div className='border-error/30 bg-error/10 text-error rounded-lg border px-4 py-3 text-sm'>
+            {error}
+          </div>
+        )}
+
+        {result && (
+          <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
+            <div className='border-base-200 border-b px-4 py-3 text-sm font-medium'>
+              {_('Connected — {{folders}} folders, {{feeds}} feeds, {{unread}} unread', {
+                folders: result.folders.length,
+                feeds: result.feeds.length,
+                unread: unreadTotal,
+              })}
+            </div>
+            <div className='divide-base-200 max-h-64 divide-y overflow-y-auto'>
+              {result.feeds.map((f) => (
+                <div key={f.id} className='flex items-center justify-between gap-3 px-4 py-2 text-sm'>
+                  <span className='min-w-0 truncate' dir='auto'>
+                    {f.title}
+                  </span>
+                  <span className='text-base-content/60 flex-shrink-0'>{f.unreadCount}</span>
+                </div>
+              ))}
+              {result.feeds.length === 0 && (
+                <div className='text-base-content/60 px-4 py-3 text-sm'>
+                  {_(
+                    'Connected, but no feeds were returned. Check that this account has subscriptions and that the GReader API is enabled in FreshRSS.',
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {isConfigured && (
           <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
