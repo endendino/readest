@@ -104,6 +104,19 @@ export interface HardcoverSettings {
   autoSync?: boolean;
 }
 
+export interface FreshRSSSettings {
+  enabled: boolean;
+  /** Base host, e.g. https://rss.iatrogeni.com (no trailing /api/greader.php). */
+  serverUrl: string;
+  username: string;
+  /** GReader API password (stored like other integration credentials). */
+  apiPassword: string;
+  /** Push article highlights to Obsidian on "Done". */
+  exportToObsidian: boolean;
+  /** When true, finishing an RSVP run auto-advances to the next unread. */
+  autoAdvanceOnRsvpEnd: boolean;
+}
+
 export interface WebDAVSettings {
   enabled: boolean;
   serverUrl: string;
@@ -359,6 +372,7 @@ export interface SystemSettings {
   readwise: ReadwiseSettings;
   hardcover: HardcoverSettings;
   webdav: WebDAVSettings;
+  freshrss: FreshRSSSettings;
 
   aiSettings: AISettings;
   /**

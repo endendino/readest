@@ -19,6 +19,7 @@ import {
 } from '@/types/book';
 import {
   HardcoverSettings,
+  FreshRSSSettings,
   KOSyncSettings,
   LibraryGroupByType,
   LibrarySortByType,
@@ -79,6 +80,15 @@ export const DEFAULT_READWISE_SETTINGS = {
   accessToken: '',
   lastSyncedAt: 0,
 } as ReadwiseSettings;
+
+export const DEFAULT_FRESHRSS_SETTINGS = {
+  enabled: false,
+  serverUrl: '',
+  username: '',
+  apiPassword: '',
+  exportToObsidian: false,
+  autoAdvanceOnRsvpEnd: true,
+} as FreshRSSSettings;
 
 export const DEFAULT_HARDCOVER_SETTINGS = {
   enabled: false,
@@ -152,6 +162,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   readwise: DEFAULT_READWISE_SETTINGS,
   hardcover: DEFAULT_HARDCOVER_SETTINGS,
   webdav: DEFAULT_WEBDAV_SETTINGS,
+  freshrss: DEFAULT_FRESHRSS_SETTINGS,
   aiSettings: DEFAULT_AI_SETTINGS,
 
   lastSyncedAtBooks: 0,
