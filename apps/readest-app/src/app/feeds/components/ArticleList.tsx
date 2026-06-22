@@ -1,15 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
-import { useLibraryStore } from '@/store/libraryStore';
 import { useFeedsStore } from '@/store/feedsStore';
+import { useOpenFeedArticle } from '../useOpenFeedArticle';
 import { eventDispatcher } from '@/utils/event';
-import { navigateToReader } from '@/utils/nav';
-import { articleToCachePath } from '@/services/freshrss/articleDoc';
 import type { FreshRSSArticle } from '@/types/freshrss';
 
 const snippet = (html: string) =>
@@ -21,11 +17,9 @@ const snippet = (html: string) =>
 
 export const ArticleList = () => {
   const _ = useTranslation();
-  const router = useRouter();
-  const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
-  const { articles, loading, error, continuation, loadMore, currentStreamId, rememberOpenArticle } =
-    useFeedsStore();
+  const { articles, loading, error, continuation, loadMore } = useFeedsStore();
+  const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);
   const fr = settings.freshrss;
 
@@ -33,19 +27,8 @@ export const ArticleList = () => {
     if (opening) return;
     setOpening(a.id);
     try {
-      const appService = await envConfig.getAppService();
-      // Stage the EPUB in OPFS Cache and import it transiently *by path*
-      // (a transient File is rejected; Cache keeps it out of Books/ so it is
-      // never persisted to the library or WebDAV-synced).
-      const path = await articleToCachePath(a, appService);
-      const { library, setLibrary } = useLibraryStore.getState();
-      const book = await appService.importBook(path, library, { transient: true });
-      if (!book) throw new Error('import returned no book');
-      // Commit to the store so the reader can resolve the book by hash
-      // (mirrors the OPDS page-streaming open flow).
-      setLibrary(library);
-      rememberOpenArticle(book.hash, a.id, currentStreamId ?? '');
-      navigateToReader(router, [book.hash]);
+      const ok = await openFeedArticle(a);
+      if (!ok) throw new Error('import returned no book');
     } catch (e) {
       eventDispatcher.dispatch('toast', {
         message: _('Could not open article: {{error}}', { error: String(e) }),
