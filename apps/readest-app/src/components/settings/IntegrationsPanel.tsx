@@ -10,6 +10,7 @@ import {
   RiDiscordLine,
   RiSendPlaneLine,
   RiCloudLine,
+  RiRssFill,
 } from 'react-icons/ri';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
@@ -26,10 +27,11 @@ import ReadwiseForm from './integrations/ReadwiseForm';
 import HardcoverForm from './integrations/HardcoverForm';
 import SendToReadestForm from './integrations/SendToReadestForm';
 import WebDAVForm from './integrations/WebDAVForm';
+import FreshRSSForm from './integrations/FreshRSSForm';
 import SubPageHeader from './SubPageHeader';
 import { SectionTitle, SettingLabel } from './primitives';
 
-type SubPage = 'kosync' | 'webdav' | 'readwise' | 'hardcover' | 'opds' | 'send' | null;
+type SubPage = 'kosync' | 'webdav' | 'readwise' | 'hardcover' | 'opds' | 'send' | 'freshrss' | null;
 
 /**
  * Integrations panel — single point of discovery for external service config:
@@ -92,7 +94,8 @@ const IntegrationsPanel: React.FC = () => {
       requestedSubPage === 'readwise' ||
       requestedSubPage === 'hardcover' ||
       requestedSubPage === 'opds' ||
-      requestedSubPage === 'send'
+      requestedSubPage === 'send' ||
+      requestedSubPage === 'freshrss'
     ) {
       setSubPage(requestedSubPage);
     }
@@ -145,6 +148,12 @@ const IntegrationsPanel: React.FC = () => {
         <SendToReadestForm onBack={() => setSubPage(null)} />
       </div>
     );
+  if (subPage === 'freshrss')
+    return (
+      <div className='my-4 w-full'>
+        <FreshRSSForm onBack={() => setSubPage(null)} />
+      </div>
+    );
 
   const koSyncStatus = settings.kosync?.enabled
     ? settings.kosync.username
@@ -163,6 +172,7 @@ const IntegrationsPanel: React.FC = () => {
       : _('Not connected');
   const opdsStatus =
     opdsCount > 0 ? _('{{count}} catalog', { count: opdsCount }) : _('No catalogs');
+  const freshrssStatus = settings.freshrss?.enabled ? _('Connected') : _('Not connected');
 
   return (
     <div className='my-4 w-full space-y-6'>
@@ -214,6 +224,12 @@ const IntegrationsPanel: React.FC = () => {
               title={_('OPDS Catalogs')}
               status={opdsStatus}
               onClick={() => setSubPage('opds')}
+            />
+            <IntegrationRow
+              icon={RiRssFill}
+              title={_('FreshRSS')}
+              status={freshrssStatus}
+              onClick={() => setSubPage('freshrss')}
             />
             <IntegrationRow
               icon={RiSendPlaneLine}
