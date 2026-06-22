@@ -68,8 +68,14 @@ export const ArticleList = () => {
             <span>{a.title}</span>
           </span>
           <span className='text-base-content/50 text-xs'>
-            {a.feedTitle}
-            {a.publishedAt ? ` · ${new Date(a.publishedAt).toLocaleDateString()}` : ''}
+            {[
+              a.feedTitle,
+              a.author,
+              a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
+              a.publishedAt ? new Date(a.publishedAt).toLocaleDateString() : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </span>
           <span className='text-base-content/60 line-clamp-2 text-sm'>{snippet(a.contentHtml)}</span>
         </button>

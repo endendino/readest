@@ -65,6 +65,7 @@ describe('greader parsers', () => {
           author: 'מחבר',
           published: 1700000000,
           canonical: [{ href: 'https://a.com/x' }],
+          categories: ['user/-/state/com.google/reading-list', 'user/-/label/News/Israel'],
           origin: { streamId: 'feed/https://a.com/rss', title: 'Paper A' },
           content: { content: '<p>full</p>' },
           summary: { content: '<p>short</p>' },
@@ -78,6 +79,7 @@ describe('greader parsers', () => {
       url: 'https://a.com/x',
       feedId: 'feed/https://a.com/rss',
       feedTitle: 'Paper A',
+      categories: ['News/Israel'],
       contentHtml: '<p>full</p>',
       publishedAt: 1700000000000,
     });

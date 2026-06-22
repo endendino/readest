@@ -24,6 +24,8 @@ export interface FreshRSSArticle {
   id: string;
   feedId: string;
   feedTitle: string;
+  /** Folder/category label paths the article is in, e.g. "News/Israel". */
+  categories: string[];
   title: string;
   author?: string;
   /** Canonical article URL. */

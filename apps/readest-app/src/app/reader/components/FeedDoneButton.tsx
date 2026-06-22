@@ -5,26 +5,24 @@ import { useRouter } from 'next/navigation';
 import { MdCheck } from 'react-icons/md';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
+import { exportArticleHighlights } from '@/services/freshrss/obsidianExport';
 import { eventDispatcher } from '@/utils/event';
 
 /**
  * Floating "mark read + back to queue" button, shown only while reading a
  * FreshRSS feed article (identified via feedsStore.openArticles[bookHash]).
- * Marks the article read in FreshRSS (the user's "delete" — propagates to every
- * client), drops it from the local queue, and returns to the feed list with the
- * read item gone, ready to tap the next.
- *
- * NOTE: we go back to the list rather than auto-opening the next article in
- * place, because the reader guards its init (isInitiating) and reader→reader
- * navigation does not reload. True in-place auto-advance would require swapping
- * the reader's book without a full navigation — a separate change.
+ * Optionally exports this article's highlights to Obsidian (WebDAV) first, then
+ * marks it read in FreshRSS (propagates to every client), drops it from the
+ * local queue, and returns to the feed list to tap the next.
  */
-export const FeedDoneButton = ({ bookHash }: { bookHash: string }) => {
+export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHash: string }) => {
   const _ = useTranslation();
   const router = useRouter();
   const { settings } = useSettingsStore();
+  const { getConfig, getBookData } = useBookDataStore();
   const entry = useFeedsStore((s) => s.openArticles[bookHash]);
   const [busy, setBusy] = useState(false);
 
@@ -35,13 +33,32 @@ export const FeedDoneButton = ({ bookHash }: { bookHash: string }) => {
     if (busy) return;
     setBusy(true);
     try {
+      // Export highlights to Obsidian FIRST, so a failure surfaces before the
+      // article is marked read (and thus before it leaves the queue).
+      if (fr.exportToObsidian) {
+        const highlights = (getConfig(bookKey)?.booknotes ?? [])
+          .filter((n) => !n.deletedAt && (n.type === 'annotation' || n.type === 'excerpt') && n.text)
+          .map((n) => ({ text: n.text as string, note: n.note }));
+        if (highlights.length > 0) {
+          const article = useFeedsStore.getState().articles.find((a) => a.id === entry.greaderId);
+          await exportArticleHighlights(
+            {
+              title: article?.title ?? getBookData(bookKey)?.book?.title ?? 'Article',
+              url: article?.url ?? '',
+              feedTitle: article?.feedTitle ?? '',
+              publishedAt: article?.publishedAt ?? 0,
+            },
+            highlights,
+            settings.webdav,
+          );
+        }
+      }
       await new FreshRSSClient(fr).markRead(entry.greaderId);
-      // TODO(Phase 5): export this article's highlights to Obsidian here.
       useFeedsStore.getState().removeArticleLocally(entry.greaderId);
       router.push('/feeds');
     } catch (e) {
       eventDispatcher.dispatch('toast', {
-        message: _('Mark-read failed: {{error}}', { error: String(e) }),
+        message: _('Done failed: {{error}}', { error: String(e) }),
         type: 'error',
       });
       setBusy(false);

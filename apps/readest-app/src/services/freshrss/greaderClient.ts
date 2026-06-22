@@ -39,6 +39,7 @@ export function mergeUnreadCounts(
 
 type RawItem = {
   id: string;
+  categories?: string[];
   title?: string;
   author?: string;
   published?: number;
@@ -54,6 +55,9 @@ export function parseStreamContents(json: { continuation?: string; items?: RawIt
     id: it.id,
     feedId: it.origin?.streamId ?? '',
     feedTitle: it.origin?.title ?? '',
+    categories: (it.categories ?? [])
+      .filter((c) => c.includes('/label/'))
+      .map((c) => c.slice(c.indexOf('/label/') + '/label/'.length)),
     title: it.title ?? '(untitled)',
     author: it.author || undefined,
     url: it.canonical?.[0]?.href ?? it.alternate?.[0]?.href ?? '',
