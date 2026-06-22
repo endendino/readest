@@ -35,24 +35,22 @@ export const FolderFeedList = () => {
           <div key={folder.id}>
             <button
               type='button'
+              dir='auto'
               onClick={() => open(folder.id, folder.label)}
-              className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 px-4 py-3 text-left'
+              className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 px-4 py-3 text-start'
             >
-              <span className='font-medium' dir='auto'>
-                {folder.label}
-              </span>
+              <span className='font-medium'>{folder.label}</span>
               <span className='text-base-content/60 flex-shrink-0 text-sm'>{folder.unreadCount}</span>
             </button>
             {folderFeeds.map((feed) => (
               <button
                 key={feed.id}
                 type='button'
+                dir='auto'
                 onClick={() => open(feed.id, feed.title)}
-                className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 py-2 pe-4 ps-8 text-left'
+                className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 py-2 pe-4 ps-8 text-start'
               >
-                <span className='min-w-0 truncate text-sm' dir='auto'>
-                  {feed.title}
-                </span>
+                <span className='min-w-0 truncate text-sm'>{feed.title}</span>
                 <span className='text-base-content/50 flex-shrink-0 text-xs'>{feed.unreadCount}</span>
               </button>
             ))}
@@ -68,12 +66,11 @@ export const FolderFeedList = () => {
             <button
               key={feed.id}
               type='button'
+              dir='auto'
               onClick={() => open(feed.id, feed.title)}
-              className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 px-4 py-2 text-left'
+              className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 px-4 py-2 text-start'
             >
-              <span className='min-w-0 truncate text-sm' dir='auto'>
-                {feed.title}
-              </span>
+              <span className='min-w-0 truncate text-sm'>{feed.title}</span>
               <span className='text-base-content/50 flex-shrink-0 text-xs'>{feed.unreadCount}</span>
             </button>
           ))}

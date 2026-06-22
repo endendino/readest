@@ -22,7 +22,7 @@ const snippet = (html: string) =>
 export const ArticleList = () => {
   const _ = useTranslation();
   const router = useRouter();
-  const { appService } = useEnv();
+  const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
   const { articles, loading, error, continuation, loadMore, currentStreamId, rememberOpenArticle } =
     useFeedsStore();
@@ -30,14 +30,18 @@ export const ArticleList = () => {
   const fr = settings.freshrss;
 
   const openArticle = async (a: FreshRSSArticle) => {
-    if (!appService || opening) return;
+    if (opening) return;
     setOpening(a.id);
     try {
+      const appService = await envConfig.getAppService();
       const file = await articleToFile(a);
-      const { library } = useLibraryStore.getState();
+      const { library, setLibrary } = useLibraryStore.getState();
       // Transient: loaded directly, never persisted to the library or synced.
       const book = await appService.importBook(file, library, { transient: true });
       if (!book) throw new Error('import returned no book');
+      // Commit to the store so the reader can resolve the book by hash
+      // (mirrors the OPDS page-streaming open flow).
+      setLibrary(library);
       rememberOpenArticle(book.hash, a.id, currentStreamId ?? '');
       navigateToReader(router, [book.hash]);
     } catch (e) {
@@ -69,21 +73,20 @@ export const ArticleList = () => {
         <button
           key={a.id}
           type='button'
+          dir='auto'
           onClick={() => void openArticle(a)}
           disabled={opening !== null}
-          className='hover:bg-base-200/50 flex w-full flex-col gap-1 px-4 py-3 text-left disabled:opacity-60'
+          className='hover:bg-base-200/50 flex w-full flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
         >
           <span className='flex items-center gap-2 font-medium'>
             {opening === a.id && <span className='loading loading-spinner loading-xs flex-shrink-0' />}
-            <span dir='auto'>{a.title}</span>
+            <span>{a.title}</span>
           </span>
-          <span className='text-base-content/50 text-xs' dir='auto'>
+          <span className='text-base-content/50 text-xs'>
             {a.feedTitle}
             {a.publishedAt ? ` · ${new Date(a.publishedAt).toLocaleDateString()}` : ''}
           </span>
-          <span className='text-base-content/60 line-clamp-2 text-sm' dir='auto'>
-            {snippet(a.contentHtml)}
-          </span>
+          <span className='text-base-content/60 line-clamp-2 text-sm'>{snippet(a.contentHtml)}</span>
         </button>
       ))}
       {continuation && (
