@@ -82,7 +82,12 @@ export const DEFAULT_READWISE_SETTINGS = {
 } as ReadwiseSettings;
 
 export const DEFAULT_FRESHRSS_SETTINGS = {
-  enabled: false,
+  // Connection lives in server-side env (see /api/freshrss). The build-time
+  // flag below just decides whether the feature surfaces by default, so it
+  // works on a fresh browser even after storage eviction. serverUrl/username/
+  // apiPassword are retained for type compatibility but are no longer used by
+  // the web client — credentials never touch the browser.
+  enabled: process.env['NEXT_PUBLIC_FRESHRSS_ENABLED'] === 'true',
   serverUrl: '',
   username: '',
   apiPassword: '',

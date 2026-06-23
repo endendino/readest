@@ -31,17 +31,17 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   loading: false,
   openArticles: {},
 
-  async loadFoldersAndFeeds(s) {
+  async loadFoldersAndFeeds(_s) {
     set({ loading: true, error: undefined });
     try {
-      const { folders, feeds } = await new FreshRSSClient(s).listFoldersAndFeeds();
+      const { folders, feeds } = await new FreshRSSClient().listFoldersAndFeeds();
       set({ folders, feeds, loading: false });
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
   },
 
-  async openStream(s, streamId, title) {
+  async openStream(_s, streamId, title) {
     set({
       loading: true,
       currentStreamId: streamId,
@@ -51,19 +51,19 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
       error: undefined,
     });
     try {
-      const page = await new FreshRSSClient(s).getUnread(streamId, 40);
+      const page = await new FreshRSSClient().getUnread(streamId, 40);
       set({ articles: page.articles, continuation: page.continuation, loading: false });
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
   },
 
-  async loadMore(s) {
+  async loadMore(_s) {
     const { currentStreamId, continuation, articles, loading } = get();
     if (!currentStreamId || !continuation || loading) return;
     set({ loading: true });
     try {
-      const page = await new FreshRSSClient(s).getUnread(currentStreamId, 40, continuation);
+      const page = await new FreshRSSClient().getUnread(currentStreamId, 40, continuation);
       set({ articles: [...articles, ...page.articles], continuation: page.continuation, loading: false });
     } catch (e) {
       set({ loading: false, error: String(e) });

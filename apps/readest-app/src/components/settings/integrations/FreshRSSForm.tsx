@@ -9,7 +9,7 @@ import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import type { FreshRSSSettings } from '@/types/settings';
 import type { FreshRSSFolder, FreshRSSFeed } from '@/types/freshrss';
 import SubPageHeader from '../SubPageHeader';
-import { SectionTitle, SettingLabel, Tips } from '../primitives';
+import { SettingLabel, Tips } from '../primitives';
 
 interface FreshRSSFormProps {
   onBack: () => void;
@@ -22,9 +22,6 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
   const router = useRouter();
 
   const fr = settings.freshrss;
-  const [serverUrl, setServerUrl] = useState(fr?.serverUrl ?? '');
-  const [username, setUsername] = useState(fr?.username ?? '');
-  const [apiPassword, setApiPassword] = useState(fr?.apiPassword ?? '');
   const [isTesting, setIsTesting] = useState(false);
   const [result, setResult] = useState<{ folders: FreshRSSFolder[]; feeds: FreshRSSFeed[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,19 +32,15 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
     await saveSettings(envConfig, newSettings);
   };
 
-  const handleTestAndSave = async () => {
+  const handleTest = async () => {
     setIsTesting(true);
     setError(null);
     setResult(null);
     try {
-      const client = new FreshRSSClient({
-        serverUrl: serverUrl.trim(),
-        username: username.trim(),
-        apiPassword,
-      });
-      const { folders, feeds } = await client.listFoldersAndFeeds();
+      const { folders, feeds } = await new FreshRSSClient().listFoldersAndFeeds();
       setResult({ folders, feeds });
-      await persist({ enabled: true, serverUrl: serverUrl.trim(), username: username.trim(), apiPassword });
+      // A successful test means the server is configured — surface the feature.
+      await persist({ enabled: true });
     } catch (e) {
       setError(String(e));
       eventDispatcher.dispatch('toast', { message: _('FreshRSS connection failed'), type: 'error' });
@@ -56,8 +49,6 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
     }
   };
 
-  const canTest = !!serverUrl.trim() && !!username.trim() && !!apiPassword;
-  const isConfigured = !!fr?.serverUrl && !!fr?.apiPassword;
   const unreadTotal = result?.feeds.reduce((n, f) => n + f.unreadCount, 0) ?? 0;
 
   return (
@@ -66,75 +57,24 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
         parentLabel={_('Integrations')}
         currentLabel={_('FreshRSS')}
         description={_(
-          'Read your FreshRSS feeds inside Readest. In FreshRSS, enable the GReader API (Settings → Profile → API access) and set an API password.',
+          'Read your FreshRSS feeds inside Readest. The connection is configured on the server (FRESHRSS_URL, FRESHRSS_USERNAME, FRESHRSS_API_PASSWORD), so credentials never touch this device and stay working even if browser storage is cleared.',
         )}
         onBack={onBack}
       />
 
       <div className='space-y-5'>
-        <div className='space-y-1.5'>
-          <SectionTitle as='label' htmlFor='freshrss-url' className='block'>
-            {_('Server URL')}
-          </SectionTitle>
-          <input
-            id='freshrss-url'
-            type='url'
-            inputMode='url'
-            placeholder='https://rss.example.com'
-            className='input input-bordered eink-bordered h-11 w-full text-sm focus:outline-none'
-            spellCheck='false'
-            autoCapitalize='off'
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-          />
-        </div>
-
-        <div className='space-y-1.5'>
-          <SectionTitle as='label' htmlFor='freshrss-user' className='block'>
-            {_('Username')}
-          </SectionTitle>
-          <input
-            id='freshrss-user'
-            type='text'
-            className='input input-bordered eink-bordered h-11 w-full text-sm focus:outline-none'
-            spellCheck='false'
-            autoCapitalize='off'
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-        </div>
-
-        <div className='space-y-1.5'>
-          <SectionTitle as='label' htmlFor='freshrss-pass' className='block'>
-            {_('API Password')}
-          </SectionTitle>
-          <input
-            id='freshrss-pass'
-            type='password'
-            placeholder={_('FreshRSS API password')}
-            className='input input-bordered eink-bordered h-11 w-full text-sm focus:outline-none'
-            spellCheck='false'
-            value={apiPassword}
-            onChange={(e) => setApiPassword(e.target.value)}
-          />
-        </div>
-
         <div className='flex justify-end'>
           <button
             type='button'
-            onClick={handleTestAndSave}
-            disabled={isTesting || !canTest}
+            onClick={handleTest}
+            disabled={isTesting}
             className={clsx(
               'btn btn-primary h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium',
               'focus-visible:ring-primary/40 focus-visible:outline-none focus-visible:ring-2',
               isTesting && 'opacity-60',
             )}
           >
-            {isTesting ? (
-              <span className='loading loading-spinner loading-sm' />
-            ) : (
-              _('Test Connection & Save')
-            )}
+            {isTesting ? <span className='loading loading-spinner loading-sm' /> : _('Test Connection')}
           </button>
         </div>
 
@@ -173,51 +113,47 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
           </div>
         )}
 
-        {isConfigured && (
-          <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
-            <div className='divide-base-200 divide-y'>
-              <label className='flex min-h-14 items-center justify-between px-4'>
-                <SettingLabel>{_('Enabled')}</SettingLabel>
-                <input
-                  type='checkbox'
-                  className='toggle'
-                  checked={fr?.enabled ?? false}
-                  onChange={() => persist({ enabled: !fr?.enabled })}
-                />
-              </label>
-              <label className='flex min-h-14 items-center justify-between px-4'>
-                <SettingLabel>{_('Export highlights to Obsidian')}</SettingLabel>
-                <input
-                  type='checkbox'
-                  className='toggle'
-                  checked={fr?.exportToObsidian ?? false}
-                  onChange={() => persist({ exportToObsidian: !fr?.exportToObsidian })}
-                />
-              </label>
-              <label className='flex min-h-14 items-center justify-between px-4'>
-                <SettingLabel>{_('Auto-advance when RSVP finishes')}</SettingLabel>
-                <input
-                  type='checkbox'
-                  className='toggle'
-                  checked={fr?.autoAdvanceOnRsvpEnd ?? true}
-                  onChange={() => persist({ autoAdvanceOnRsvpEnd: !fr?.autoAdvanceOnRsvpEnd })}
-                />
-              </label>
-            </div>
+        <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
+          <div className='divide-base-200 divide-y'>
+            <label className='flex min-h-14 items-center justify-between px-4'>
+              <SettingLabel>{_('Enabled')}</SettingLabel>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={fr?.enabled ?? false}
+                onChange={() => persist({ enabled: !fr?.enabled })}
+              />
+            </label>
+            <label className='flex min-h-14 items-center justify-between px-4'>
+              <SettingLabel>{_('Export highlights to Obsidian')}</SettingLabel>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={fr?.exportToObsidian ?? false}
+                onChange={() => persist({ exportToObsidian: !fr?.exportToObsidian })}
+              />
+            </label>
+            <label className='flex min-h-14 items-center justify-between px-4'>
+              <SettingLabel>{_('Auto-advance when RSVP finishes')}</SettingLabel>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={fr?.autoAdvanceOnRsvpEnd ?? true}
+                onChange={() => persist({ autoAdvanceOnRsvpEnd: !fr?.autoAdvanceOnRsvpEnd })}
+              />
+            </label>
           </div>
-        )}
+        </div>
 
-        {isConfigured && (
-          <div className='flex justify-end'>
-            <button
-              type='button'
-              onClick={() => router.push('/feeds')}
-              className='btn btn-primary h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium'
-            >
-              {_('Open Feeds')}
-            </button>
-          </div>
-        )}
+        <div className='flex justify-end'>
+          <button
+            type='button'
+            onClick={() => router.push('/feeds')}
+            className='btn btn-primary h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium'
+          >
+            {_('Open Feeds')}
+          </button>
+        </div>
 
         <Tips>
           <li>

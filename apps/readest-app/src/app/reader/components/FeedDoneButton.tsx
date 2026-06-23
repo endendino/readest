@@ -53,7 +53,7 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
           );
         }
       }
-      await new FreshRSSClient(fr).markRead(entry.greaderId);
+      await new FreshRSSClient().markRead(entry.greaderId);
       useFeedsStore.getState().removeArticleLocally(entry.greaderId);
       router.push('/feeds');
     } catch (e) {

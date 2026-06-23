@@ -103,7 +103,7 @@ export const ArticleList = () => {
     removeArticleLocally(a.id);
     if (!fr) return;
     try {
-      await new FreshRSSClient(fr).markRead(a.id);
+      await new FreshRSSClient().markRead(a.id);
     } catch (e) {
       eventDispatcher.dispatch('toast', {
         message: _('Mark-read failed: {{error}}', { error: String(e) }),

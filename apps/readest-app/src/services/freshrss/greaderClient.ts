@@ -76,13 +76,13 @@ export function buildMarkReadBody(itemId: string, writeToken: string): string {
 }
 
 // --- proxy-backed client -------------------------------------------------
-import type { FreshRSSSettings } from '@/types/settings';
-
-const trimSlash = (s: string) => s.replace(/\/+$/, '');
-const base = (serverUrl: string) => `${trimSlash(serverUrl)}/api/greader.php`;
+// All connection details (server URL + credentials) live server-side in the
+// /api/freshrss route's env vars. This client only ever sends RELATIVE GReader
+// paths, so nothing sensitive is held in the browser or the JS bundle and the
+// connection survives any browser-storage eviction.
 
 async function proxy(opts: {
-  url: string;
+  path: string;
   method?: 'GET' | 'POST';
   auth?: string;
   body?: string;
@@ -100,29 +100,22 @@ export class FreshRSSClient {
   private auth?: string;
   private writeToken?: string;
 
-  constructor(private settings: Pick<FreshRSSSettings, 'serverUrl' | 'username' | 'apiPassword'>) {}
-
   async login(): Promise<void> {
-    const body = new URLSearchParams({
-      Email: this.settings.username,
-      Passwd: this.settings.apiPassword,
-    }).toString();
-    const text = await proxy({
-      url: `${base(this.settings.serverUrl)}/accounts/ClientLogin`,
-      method: 'POST',
-      body,
-    });
+    // Credentials are injected server-side on this request.
+    const text = await proxy({ path: '/accounts/ClientLogin', method: 'POST' });
     const m = text.match(/Auth=(.+)/);
-    if (!m) throw new Error('FreshRSS login failed: check server URL, username, and API password');
+    if (!m) {
+      throw new Error(
+        'FreshRSS login failed: check the server configuration (FRESHRSS_URL / FRESHRSS_USERNAME / FRESHRSS_API_PASSWORD)',
+      );
+    }
     this.auth = m[1]!.trim();
-    this.writeToken = (
-      await proxy({ url: `${base(this.settings.serverUrl)}/reader/api/0/token`, auth: this.auth })
-    ).trim();
+    this.writeToken = (await proxy({ path: '/reader/api/0/token', auth: this.auth })).trim();
   }
 
   private async getJson<T>(path: string): Promise<T> {
     if (!this.auth) await this.login();
-    const text = await proxy({ url: `${base(this.settings.serverUrl)}${path}`, auth: this.auth });
+    const text = await proxy({ path, auth: this.auth });
     return JSON.parse(text) as T;
   }
 
@@ -149,7 +142,7 @@ export class FreshRSSClient {
   async markRead(itemId: string): Promise<void> {
     if (!this.auth || !this.writeToken) await this.login();
     await proxy({
-      url: `${base(this.settings.serverUrl)}/reader/api/0/edit-tag`,
+      path: '/reader/api/0/edit-tag',
       method: 'POST',
       auth: this.auth,
       body: buildMarkReadBody(itemId, this.writeToken!),

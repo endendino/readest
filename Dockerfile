@@ -39,6 +39,7 @@ ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_OBJECT_STORAGE_TYPE
 ARG NEXT_PUBLIC_STORAGE_FIXED_QUOTA
 ARG NEXT_PUBLIC_TRANSLATION_FIXED_QUOTA
+ARG NEXT_PUBLIC_FRESHRSS_ENABLED
 COPY --from=dependencies /app/node_modules /app/node_modules
 COPY --from=dependencies /app/apps/readest-app/node_modules /app/apps/readest-app/node_modules
 COPY --from=dependencies /app/apps/readest-app/public/vendor /app/apps/readest-app/public/vendor
@@ -49,6 +50,9 @@ WORKDIR /app/apps/readest-app
 # next.config.mjs gates `output: 'standalone'` on BUILD_STANDALONE so other
 # web builds keep their default output.
 ENV BUILD_STANDALONE=true
+# Self-hosted web image: Next 16 + Turbopack production builds peak well above
+# the default heap; raise it so the build doesn't OOM on smaller VPS hosts.
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 RUN pnpm build-web
 
 # Production runtime ships only the standalone server, its traced node_modules,
