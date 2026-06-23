@@ -40,6 +40,9 @@ ARG NEXT_PUBLIC_OBJECT_STORAGE_TYPE
 ARG NEXT_PUBLIC_STORAGE_FIXED_QUOTA
 ARG NEXT_PUBLIC_TRANSLATION_FIXED_QUOTA
 ARG NEXT_PUBLIC_FRESHRSS_ENABLED
+ARG NEXT_PUBLIC_WEBDAV_URL
+ARG NEXT_PUBLIC_WEBDAV_ENABLED
+ARG NEXT_PUBLIC_WEBDAV_ROOT_PATH
 COPY --from=dependencies /app/node_modules /app/node_modules
 COPY --from=dependencies /app/apps/readest-app/node_modules /app/apps/readest-app/node_modules
 COPY --from=dependencies /app/apps/readest-app/public/vendor /app/apps/readest-app/public/vendor

@@ -2,7 +2,7 @@ import { Book, BookConfig, BookNote } from '@/types/book';
 import { WebDAVSettings } from '@/types/settings';
 import {
   WebDAVConfig,
-  buildBasicAuthHeader,
+  buildAuthHeaders,
   buildRequestUrl,
   deleteDirectory,
   ensureDirectory,
@@ -357,7 +357,7 @@ export const pushBookFile = async (
       await ensureDirectory(client, dirs);
       const remoteUrl = buildRequestUrl(settings.serverUrl, path);
       const headers: Record<string, string> = {
-        Authorization: buildBasicAuthHeader(settings.username, settings.password),
+        ...buildAuthHeaders(settings.username, settings.password),
       };
       const ok = await meta.upload(remoteUrl, headers);
       if (!ok) {

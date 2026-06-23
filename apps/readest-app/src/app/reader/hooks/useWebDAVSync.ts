@@ -41,9 +41,9 @@ import { useWindowActiveChanged } from './useWindowActiveChanged';
  * Gating:
  *   - `settings.webdav.enabled` must be true (master switch on the WebDAV
  *     sub-page in Integrations)
- *   - `settings.webdav.serverUrl` and `settings.webdav.username` must be
- *     non-empty (the Connect flow guarantees this when enabled is true,
- *     but defensive check is cheap)
+ *   - `settings.webdav.serverUrl` must be non-empty. `username` is NOT
+ *     required: in reverse-proxy mode the credentials are injected
+ *     server-side, so the client config carries an empty username/password.
  *
  * Strategy semantics — same vocabulary as KOSync so users only learn one:
  *   - 'silent' (default): always push and always pull, latest writer wins
@@ -155,7 +155,11 @@ export const useWebDAVSync = (bookKey: string) => {
 
   const isReady = useMemo(() => {
     const w = settings.webdav;
-    return !!(w?.enabled && w?.serverUrl && w?.username);
+    // username is intentionally NOT required: in reverse-proxy mode the
+    // credentials are injected server-side, so the client config has an empty
+    // username/password by design. Direct mode still works (a missing password
+    // just yields a 401 → AUTH_FAILED, which is handled downstream).
+    return !!(w?.enabled && w?.serverUrl);
   }, [settings.webdav]);
 
   const strategy = settings.webdav?.strategy ?? 'silent';

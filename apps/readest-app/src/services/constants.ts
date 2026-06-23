@@ -103,11 +103,18 @@ export const DEFAULT_HARDCOVER_SETTINGS = {
 } as HardcoverSettings;
 
 export const DEFAULT_WEBDAV_SETTINGS = {
-  enabled: false,
-  serverUrl: '',
+  // serverUrl/enabled can be seeded at build time so a self-hosted web build
+  // auto-configures against a same-origin, server-authenticated WebDAV path
+  // (e.g. https://host/dav, gated by a reverse proxy that injects the real
+  // credentials). username/password stay empty in that mode — the proxy owns
+  // them, so they never live in the browser and survive any storage eviction.
+  // When the build args are unset (native app), this falls back to the manual
+  // setup flow exactly as before.
+  enabled: process.env['NEXT_PUBLIC_WEBDAV_ENABLED'] === 'true',
+  serverUrl: process.env['NEXT_PUBLIC_WEBDAV_URL'] ?? '',
   username: '',
   password: '',
-  rootPath: '/',
+  rootPath: process.env['NEXT_PUBLIC_WEBDAV_ROOT_PATH'] ?? '/',
   syncProgress: true,
   syncNotes: true,
   syncBooks: false,

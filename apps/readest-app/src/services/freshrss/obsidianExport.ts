@@ -55,17 +55,23 @@ export async function exportArticleHighlights(
 ): Promise<void> {
   const markdown = renderArticleMarkdown(meta, highlights);
   if (!markdown) return;
-  if (!webdav.serverUrl || !webdav.username) {
+  if (!webdav.serverUrl) {
     throw new Error('WebDAV is not configured (required for Obsidian export)');
   }
   const date = meta.publishedAt ? new Date(meta.publishedAt).toISOString().slice(0, 10) : 'undated';
   const safeTitle = (meta.title || 'article').split('/').join('-').trim().slice(0, 80) || 'article';
   const base = webdav.serverUrl.replace(/\/+$/, '');
   const url = `${base}/Obsidian/Readest/${encodeURIComponent(`${date}-${safeTitle}.md`)}`;
-  const auth = btoa(`${webdav.username}:${webdav.password}`);
+  // Omit Authorization when creds are empty (proxied mode): the request is then
+  // same-origin and the browser's cached app-login flows to the reverse proxy,
+  // which injects the real WebDAV auth. With creds present, send them directly.
+  const authHeader: Record<string, string> =
+    webdav.username || webdav.password
+      ? { Authorization: `Basic ${btoa(`${webdav.username}:${webdav.password}`)}` }
+      : {};
   const res = await fetch(url, {
     method: 'PUT',
-    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'text/markdown; charset=utf-8' },
+    headers: { ...authHeader, 'Content-Type': 'text/markdown; charset=utf-8' },
     body: markdown,
   });
   if (!res.ok) throw new Error(`Obsidian export failed: HTTP ${res.status}`);
