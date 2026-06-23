@@ -63,6 +63,7 @@ export function parseStreamContents(json: { continuation?: string; items?: RawIt
     url: it.canonical?.[0]?.href ?? it.alternate?.[0]?.href ?? '',
     publishedAt: (it.published ?? 0) * 1000,
     contentHtml: it.content?.content ?? it.summary?.content ?? '',
+    summaryHtml: it.summary?.content,
   }));
   return { articles, continuation: json.continuation };
 }

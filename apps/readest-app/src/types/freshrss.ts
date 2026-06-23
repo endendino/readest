@@ -34,6 +34,13 @@ export interface FreshRSSArticle {
   publishedAt: number;
   /** Full HTML content (content > summary). May contain RTL text. */
   contentHtml: string;
+  /**
+   * The feed's summary/description HTML, when provided. Used as the article's
+   * blurb/sub-headline in the quick view when it's a genuine excerpt (present
+   * and shorter than {@link contentHtml}); otherwise the quick view falls back
+   * to the first paragraph of contentHtml.
+   */
+  summaryHtml?: string;
 }
 
 /** Cursor for paged stream fetches. */
