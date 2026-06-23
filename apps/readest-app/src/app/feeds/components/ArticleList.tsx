@@ -22,6 +22,11 @@ const firstParagraph = (html: string) => {
   return stripText(m ? m[1]! : html);
 };
 
+const wordCount = (a: FreshRSSArticle) => {
+  const t = stripText(a.contentHtml);
+  return t ? t.split(/\s+/).length : 0;
+};
+
 const QUICK_VIEW_MAX = 700;
 
 /**
@@ -163,9 +168,10 @@ export const ArticleList = () => {
     <div className='divide-base-200 divide-y'>
       {articles.map((a) => {
         const expanded = expandedId === a.id;
+        const wc = wordCount(a);
         return (
           <SwipeRow key={a.id} onDismiss={() => void dismiss(a)}>
-            <div className='bg-base-100'>
+            <div className={expanded ? 'border-base-300 bg-base-200/30 border-y-2' : 'bg-base-100'}>
               <div className='flex items-stretch'>
                 <button
                   type='button'
@@ -182,9 +188,9 @@ export const ArticleList = () => {
                   </span>
                   <span className='text-base-content/50 text-xs'>
                     {[
-                      a.feedTitle,
                       a.author,
                       a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
+                      wc ? _('{{count}} words', { count: wc.toLocaleString() }) : null,
                       a.publishedAt ? new Date(a.publishedAt).toLocaleDateString() : null,
                     ]
                       .filter(Boolean)
@@ -206,30 +212,30 @@ export const ArticleList = () => {
                   <p dir='auto' className='text-base-content/80 text-sm leading-relaxed'>
                     {quickViewText(a)}
                   </p>
-                  <div className='mt-3 flex items-center gap-1'>
+                  <div className='mt-3 flex items-center justify-center gap-2'>
                     <button
                       type='button'
                       onClick={() => setExpandedId(null)}
-                      className='btn btn-ghost btn-xs gap-1'
+                      className='btn btn-ghost btn-sm gap-1'
                     >
-                      <MdExpandLess className='h-4 w-4' />
+                      <MdExpandLess className='h-5 w-5' />
                       {_('Fold')}
                     </button>
                     <button
                       type='button'
                       onClick={() => void openArticle(a)}
                       disabled={opening !== null}
-                      className='btn btn-ghost btn-xs text-primary gap-1'
+                      className='btn btn-ghost btn-sm text-primary gap-1'
                     >
-                      <MdMenuBook className='h-4 w-4' />
+                      <MdMenuBook className='h-5 w-5' />
                       {_('Read')}
                     </button>
                     <button
                       type='button'
                       onClick={() => void dismiss(a)}
-                      className='btn btn-ghost btn-xs hover:text-error gap-1'
+                      className='btn btn-ghost btn-sm hover:text-error gap-1'
                     >
-                      <MdDeleteOutline className='h-4 w-4' />
+                      <MdDeleteOutline className='h-5 w-5' />
                       {_('Delete')}
                     </button>
                   </div>
