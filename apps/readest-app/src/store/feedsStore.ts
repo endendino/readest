@@ -14,6 +14,9 @@ interface FeedsState {
   error?: string;
   /** hash -> {greaderId, streamId} for transient article books opened in the reader. */
   openArticles: Record<string, { greaderId: string; streamId: string }>;
+  /** articleId -> LLM-generated quick-view summary (cached for the session). */
+  summaries: Record<string, string>;
+  setSummary: (articleId: string, summary: string) => void;
   loadFoldersAndFeeds: (s: FreshRSSSettings) => Promise<void>;
   openStream: (s: FreshRSSSettings, streamId: string, title: string) => Promise<void>;
   loadMore: (s: FreshRSSSettings) => Promise<void>;
@@ -30,6 +33,11 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   articles: [],
   loading: false,
   openArticles: {},
+  summaries: {},
+
+  setSummary(articleId, summary) {
+    set((st) => ({ summaries: { ...st.summaries, [articleId]: summary } }));
+  },
 
   async loadFoldersAndFeeds(_s) {
     set({ loading: true, error: undefined });

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import type { ReactNode, TouchEvent } from 'react';
-import { MdClose, MdExpandLess, MdMenuBook, MdDeleteOutline } from 'react-icons/md';
+import { MdClose, MdExpandLess, MdMenuBook, MdDeleteOutline, MdAutoAwesome } from 'react-icons/md';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useFeedsStore } from '@/store/feedsStore';
@@ -29,23 +29,40 @@ const wordCount = (a: FreshRSSArticle) => {
 
 const QUICK_VIEW_MAX = 700;
 
+/** Whether the feed gives this article a genuine blurb (a summary that's a real
+ *  excerpt, shorter than the full content) vs. only full text. Blurb-less
+ *  articles are the ones we auto-summarize with an LLM. */
+const hasBlurb = (a: FreshRSSArticle) => {
+  if (!a.summaryHtml) return false;
+  const summary = stripText(a.summaryHtml);
+  return !!summary && summary.length < stripText(a.contentHtml).length;
+};
+
 /**
  * The quick-view blurb: the feed's summary/description when it's a genuine
  * excerpt (present and shorter than the full content), otherwise the first
- * paragraph of the content. Capped so the expanded card can't balloon.
- *
- * TODO(future): when no real blurb exists, generate an LLM summary instead of
- * falling back to the first paragraph.
+ * paragraph of the content. Capped so the expanded card can't balloon. An LLM
+ * summary (when available) takes precedence over this — see the component.
  */
 const quickViewText = (a: FreshRSSArticle) => {
   const content = stripText(a.contentHtml);
   let text = '';
-  if (a.summaryHtml) {
-    const summary = stripText(a.summaryHtml);
-    if (summary && summary.length < content.length) text = summary;
-  }
+  if (hasBlurb(a)) text = stripText(a.summaryHtml!);
   if (!text) text = firstParagraph(a.contentHtml) || content;
   return text.length > QUICK_VIEW_MAX ? `${text.slice(0, QUICK_VIEW_MAX).trim()}…` : text;
+};
+
+/** Ask the server (Claude) to summarize an article. Returns the summary text,
+ *  or throws on failure (incl. 501 when ANTHROPIC_API_KEY isn't configured). */
+const fetchSummary = async (a: FreshRSSArticle): Promise<string> => {
+  const res = await fetch('/api/summarize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: stripText(a.contentHtml) }),
+  });
+  const data = (await res.json().catch(() => null)) as { summary?: string; error?: string } | null;
+  if (!res.ok || !data?.summary) throw new Error(data?.error || `summarize ${res.status}`);
+  return data.summary;
 };
 
 const SWIPE_THRESHOLD = 80;
@@ -108,10 +125,36 @@ export const ArticleList = () => {
   const _ = useTranslation();
   const { settings } = useSettingsStore();
   const { articles, loading, error, continuation, loadMore, removeArticleLocally } = useFeedsStore();
+  const { summaries, setSummary } = useFeedsStore();
   const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [summarizing, setSummarizing] = useState<Set<string>>(new Set());
   const fr = settings.freshrss;
+
+  // Generate (or regenerate) the LLM summary for an article. `silent` suppresses
+  // the error toast — used for the auto path so a blurb-less article that can't
+  // be summarized just keeps its first-paragraph fallback.
+  const runSummary = async (a: FreshRSSArticle, silent = false) => {
+    if (summarizing.has(a.id)) return;
+    setSummarizing((prev) => new Set(prev).add(a.id));
+    try {
+      setSummary(a.id, await fetchSummary(a));
+    } catch (e) {
+      if (!silent) {
+        eventDispatcher.dispatch('toast', {
+          message: _('Summary failed: {{error}}', { error: String(e) }),
+          type: 'error',
+        });
+      }
+    } finally {
+      setSummarizing((prev) => {
+        const next = new Set(prev);
+        next.delete(a.id);
+        return next;
+      });
+    }
+  };
 
   const openArticle = async (a: FreshRSSArticle) => {
     if (opening) return;
@@ -129,10 +172,16 @@ export const ArticleList = () => {
   };
 
   // First tap on the title opens the quick view; a second tap opens the full
-  // article in the reader.
+  // article in the reader. On first expand, auto-summarize blurb-less articles
+  // (the "both" behaviour) — articles that already have a real blurb keep it
+  // unless the user taps the Summarize button.
   const onTitleClick = (a: FreshRSSArticle) => {
-    if (expandedId === a.id) void openArticle(a);
-    else setExpandedId(a.id);
+    if (expandedId === a.id) {
+      void openArticle(a);
+      return;
+    }
+    setExpandedId(a.id);
+    if (!hasBlurb(a) && !summaries[a.id]) void runSummary(a, true);
   };
 
   // Dismiss without opening: drop it from the queue immediately (snappy) and
@@ -210,8 +259,20 @@ export const ArticleList = () => {
               {expanded && (
                 <div className='px-4 pb-3'>
                   <p dir='auto' className='text-base-content/80 text-sm leading-relaxed'>
-                    {quickViewText(a)}
+                    {summaries[a.id] ?? quickViewText(a)}
                   </p>
+                  {summarizing.has(a.id) && (
+                    <span className='text-base-content/50 mt-1 flex items-center gap-1 text-xs'>
+                      <span className='loading loading-spinner loading-xs' />
+                      {_('Summarizing…')}
+                    </span>
+                  )}
+                  {summaries[a.id] && (
+                    <span className='text-base-content/40 mt-1 flex items-center gap-1 text-xs'>
+                      <MdAutoAwesome className='h-3 w-3' />
+                      {_('AI summary')}
+                    </span>
+                  )}
                   <div className='mt-3 flex items-center justify-center gap-2'>
                     <button
                       type='button'
@@ -220,6 +281,15 @@ export const ArticleList = () => {
                     >
                       <MdExpandLess className='h-5 w-5' />
                       {_('Fold')}
+                    </button>
+                    <button
+                      type='button'
+                      onClick={() => void runSummary(a)}
+                      disabled={summarizing.has(a.id)}
+                      className='btn btn-ghost btn-sm gap-1'
+                    >
+                      <MdAutoAwesome className='h-5 w-5' />
+                      {_('Summarize')}
                     </button>
                     <button
                       type='button'
