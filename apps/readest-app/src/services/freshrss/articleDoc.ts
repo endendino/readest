@@ -23,21 +23,46 @@ async function fetchFavicon(
   }
 }
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 /**
- * Turn a FreshRSS article into an EPUB `File`. Reuses the Send-to-Readest
- * clipper pipeline: fetch + embed the article's images (via the same-origin
- * image proxy, since the web build can't fetch them cross-origin), then
- * `htmlToBook` (sanitize → valid XHTML → `buildEpub`) with language/RTL
- * detection. The body is already the full content (FreshRSS full-text), so no
- * Readability extraction is needed.
+ * The visible article header rendered at the top of the content: source favicon
+ * + source name, the headline (`<h1>`, also the TOC anchor), and a byline
+ * (author · date). The cover image only shows in the library thumbnail, never in
+ * the reading view, so the header has to live in the content itself. The favicon
+ * `<img>` is bundled like any other article image (fetched via /api/img). Uses
+ * only sanitize-allowed tags; `<body dir="auto">` handles RTL alignment.
+ */
+function buildMasthead(article: FreshRSSArticle): string {
+  const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString() : '';
+  const logo = article.feedIconUrl ? `<img src="${escapeHtml(article.feedIconUrl)}" alt="" /> ` : '';
+  const source = article.feedTitle ? `<strong>${escapeHtml(article.feedTitle)}</strong>` : '';
+  const sourceLine = logo || source ? `<p>${logo}${source}</p>` : '';
+  const titleLine = `<h1>${escapeHtml(article.title || '(untitled)')}</h1>`;
+  const byline = [article.author, date]
+    .filter(Boolean)
+    .map((s) => escapeHtml(s as string))
+    .join(' · ');
+  const bylineLine = byline ? `<p>${byline}</p>` : '';
+  return `${sourceLine}${titleLine}${bylineLine}<hr />`;
+}
+
+/**
+ * Turn a FreshRSS article into an EPUB `File`. Prepends a masthead (source logo +
+ * name + headline + byline), then reuses the Send-to-Readest clipper pipeline:
+ * fetch + embed every image (incl. the favicon) via the same-origin image proxy,
+ * then `htmlToBook` (sanitize → valid XHTML → `buildEpub`) with language/RTL
+ * detection.
  *
- * Always attaches a synthetic cover (source favicon + name + title). Besides
- * giving the article a masthead, an explicit cover stops foliate-js from falling
- * back to the first CONTENT image as the cover (epub.js `Resources.cover`) — that
- * fallback was rendering the lead photo twice (implicit cover + inline).
+ * Also attaches a synthetic cover (favicon + name + title) — used for the library
+ * thumbnail, and an explicit cover stops foliate-js falling back to the first
+ * CONTENT image as the cover (epub.js `Resources.cover`), which duplicated the
+ * lead photo.
  */
 export async function articleToFile(article: FreshRSSArticle): Promise<File> {
-  const body = article.contentHtml?.trim() || `<p>${article.title}</p>`;
+  const rawBody = article.contentHtml?.trim() || `<p>${escapeHtml(article.title || '')}</p>`;
+  const body = buildMasthead(article) + rawBody;
   // useProxy routes the cross-origin image fetches through /api/img on web; on
   // Tauri the bundler hits the network directly (no CORS), ignoring the flag.
   const bundle = await bundleAssets(body, article.url || '', { useProxy: true });
