@@ -271,7 +271,7 @@ export const ArticleList = () => {
                         <MdAutoAwesome className='h-3.5 w-3.5' />
                         {_('AI summary')}
                       </span>
-                      <p className='text-base-content/80 text-sm leading-relaxed'>
+                      <p dir='auto' className='text-base-content/80 text-sm leading-relaxed'>
                         {summaries[a.id]}
                       </p>
                     </div>
