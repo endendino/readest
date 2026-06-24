@@ -73,6 +73,13 @@ COPY --from=build --chown=node:node /app/apps/readest-app/.next/standalone ./
 # to the server so their default relative paths resolve.
 COPY --from=build --chown=node:node /app/apps/readest-app/.next/static ./apps/readest-app/.next/static
 COPY --from=build --chown=node:node /app/apps/readest-app/public ./apps/readest-app/public
+# sharp ships a platform-specific native binary that the Next standalone trace
+# doesn't reliably carry through pnpm's symlinked layout (the server then 500s
+# with "Could not load the sharp module"). Install it straight into the
+# production node_modules so the /api/img resizer has it at runtime.
+RUN npm install --no-save --no-package-lock --no-audit --no-fund \
+      --include=optional --os=linux --cpu=x64 sharp@0.35.2 \
+  && chown -R node:node /app/node_modules/sharp /app/node_modules/@img
 USER node
 EXPOSE 3000
 ENTRYPOINT ["node", "apps/readest-app/server.js"]
