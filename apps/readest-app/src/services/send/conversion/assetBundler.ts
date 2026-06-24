@@ -13,16 +13,31 @@ import type { EpubImage } from './types';
 // full image-fetch header set (UA + Sec-Ch-Ua + Sec-Fetch-* + Referer)
 // so CDNs that gate images on the browser shape — NYT, WSJ, paywalled
 // CDNs — cooperate.
-const httpFetch = (url: string, referer: string | null, init?: RequestInit): Promise<Response> => {
-  if (!isTauriAppPlatform()) {
-    return globalThis.fetch(url, { credentials: 'include', ...init });
+const httpFetch = (
+  url: string,
+  referer: string | null,
+  init?: RequestInit,
+  useProxy = false,
+): Promise<Response> => {
+  if (isTauriAppPlatform()) {
+    const baseHeaders = imageFetchHeaders(referer);
+    const headers = new Headers(init?.headers);
+    for (const [k, v] of Object.entries(baseHeaders)) {
+      if (!headers.has(k)) headers.set(k, v);
+    }
+    return tauriFetch(url, { ...init, headers });
   }
-  const baseHeaders = imageFetchHeaders(referer);
-  const headers = new Headers(init?.headers);
-  for (const [k, v] of Object.entries(baseHeaders)) {
-    if (!headers.has(k)) headers.set(k, v);
+  // Plain web build: cross-origin image fetches are CORS-blocked, so route
+  // through the same-origin server-side image proxy (see /api/img). The
+  // browser-extension service worker has host_permissions and calls this
+  // with useProxy=false, hitting the network directly with cookies.
+  if (useProxy) {
+    const proxied = `/api/img?url=${encodeURIComponent(url)}${
+      referer ? `&referer=${encodeURIComponent(referer)}` : ''
+    }`;
+    return globalThis.fetch(proxied, init);
   }
-  return tauriFetch(url, { ...init, headers });
+  return globalThis.fetch(url, { credentials: 'include', ...init });
 };
 
 /** Per-asset limits picked to keep clipped articles light. */
@@ -188,11 +203,15 @@ interface FetchedAsset {
   mime: string;
 }
 
-async function fetchAsset(url: string, referer: string | null): Promise<FetchedAsset | null> {
+async function fetchAsset(
+  url: string,
+  referer: string | null,
+  useProxy: boolean,
+): Promise<FetchedAsset | null> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await httpFetch(url, referer, { signal: ac.signal, redirect: 'follow' });
+    const res = await httpFetch(url, referer, { signal: ac.signal, redirect: 'follow' }, useProxy);
     if (!res.ok) return null;
     const bytes = await res.arrayBuffer();
     if (bytes.byteLength === 0) return null;
@@ -231,7 +250,9 @@ export interface BundleAssetsResult {
 export async function bundleAssets(
   contentHtml: string,
   pageUrl: string,
+  opts: { useProxy?: boolean } = {},
 ): Promise<BundleAssetsResult> {
+  const useProxy = opts.useProxy ?? false;
   const doc = new DOMParser().parseFromString(`<div id="root">${contentHtml}</div>`, 'text/html');
   const root = doc.getElementById('root');
   if (!root) return { html: contentHtml, images: [], missing: 0 };
@@ -323,7 +344,7 @@ export async function bundleAssets(
         continue;
       }
       try {
-        const asset = await fetchAsset(url, pageUrl);
+        const asset = await fetchAsset(url, pageUrl, useProxy);
         if (asset && totalBytes + asset.bytes.byteLength <= MAX_TOTAL_ASSET_BYTES) {
           fetched.set(url, asset);
           totalBytes += asset.bytes.byteLength;

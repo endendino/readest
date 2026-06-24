@@ -1,20 +1,27 @@
 import type { FreshRSSArticle } from '@/types/freshrss';
 import type { AppService, FileSystem } from '@/types/system';
 import { htmlToBook } from '@/services/send/conversion/convertToEpub';
+import { bundleAssets } from '@/services/send/conversion/assetBundler';
 
 /**
  * Turn a FreshRSS article into an EPUB `File`. Reuses the Send-to-Readest
- * clipper pipeline (`htmlToBook`): sanitize → valid XHTML → `buildEpub`, with
- * language/RTL detection from the content. The body is already the full content
- * (FreshRSS full-text), so no Readability extraction is needed.
+ * clipper pipeline: fetch + embed the article's images (via the same-origin
+ * image proxy, since the web build can't fetch them cross-origin), then
+ * `htmlToBook` (sanitize → valid XHTML → `buildEpub`) with language/RTL
+ * detection. The body is already the full content (FreshRSS full-text), so no
+ * Readability extraction is needed.
  */
 export async function articleToFile(article: FreshRSSArticle): Promise<File> {
   const body = article.contentHtml?.trim() || `<p>${article.title}</p>`;
+  // useProxy routes the cross-origin image fetches through /api/img on web; on
+  // Tauri the bundler hits the network directly (no CORS), ignoring the flag.
+  const bundle = await bundleAssets(body, article.url || '', { useProxy: true });
   const { file } = await htmlToBook(
-    body,
+    bundle.html,
     article.title || '(untitled)',
     article.author || article.feedTitle || '',
     article.url || article.id,
+    bundle.images,
   );
   return file;
 }
