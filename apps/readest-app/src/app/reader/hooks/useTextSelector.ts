@@ -18,6 +18,14 @@ import { useInstantAnnotation } from './useInstantAnnotation';
 
 const ZERO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
+// Firefox (notably on Android) ties long-press text selection to the contextmenu
+// gesture: calling preventDefault() on contextmenu cancels the selection itself.
+// Chrome/Safari suppress the menu without losing the selection, but on Firefox we
+// must NOT suppress it or the user can't select any text. The app's highlight
+// popup still appears via selectionchange.
+const IS_FIREFOX =
+  typeof navigator !== 'undefined' && /firefox|fxios/i.test(navigator.userAgent);
+
 // The selection focus must rest in a screen corner for this long before the
 // page auto-turns, so merely passing a corner mid-drag doesn't flip the page.
 const AUTO_TURN_DWELL_MS = 500;
@@ -607,6 +615,8 @@ export const useTextSelector = (
   };
 
   const handleContextmenu = (event: Event) => {
+    // Never suppress on Firefox — doing so cancels the long-press selection.
+    if (IS_FIREFOX) return;
     if (appService?.isMobile) {
       event.preventDefault();
       event.stopPropagation();
