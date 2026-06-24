@@ -2,6 +2,26 @@ import type { FreshRSSArticle } from '@/types/freshrss';
 import type { AppService, FileSystem } from '@/types/system';
 import { htmlToBook } from '@/services/send/conversion/convertToEpub';
 import { bundleAssets } from '@/services/send/conversion/assetBundler';
+import { generateCoverSvg } from '@/services/send/conversion/coverGenerator';
+
+/** Fetch the source feed's favicon (via the same-origin image proxy) for the
+ *  cover avatar. Returns undefined on any failure — the cover generator then
+ *  falls back to an initial-letter avatar. */
+async function fetchFavicon(
+  iconUrl?: string,
+): Promise<{ bytes: ArrayBuffer; mime: string } | undefined> {
+  if (!iconUrl) return undefined;
+  try {
+    const res = await fetch(`/api/img?url=${encodeURIComponent(iconUrl)}`);
+    if (!res.ok) return undefined;
+    const mime = (res.headers.get('content-type') || '').split(';')[0] || '';
+    if (!mime.startsWith('image/')) return undefined;
+    const bytes = await res.arrayBuffer();
+    return bytes.byteLength ? { bytes, mime } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Turn a FreshRSS article into an EPUB `File`. Reuses the Send-to-Readest
@@ -10,18 +30,32 @@ import { bundleAssets } from '@/services/send/conversion/assetBundler';
  * `htmlToBook` (sanitize → valid XHTML → `buildEpub`) with language/RTL
  * detection. The body is already the full content (FreshRSS full-text), so no
  * Readability extraction is needed.
+ *
+ * Always attaches a synthetic cover (source favicon + name + title). Besides
+ * giving the article a masthead, an explicit cover stops foliate-js from falling
+ * back to the first CONTENT image as the cover (epub.js `Resources.cover`) — that
+ * fallback was rendering the lead photo twice (implicit cover + inline).
  */
 export async function articleToFile(article: FreshRSSArticle): Promise<File> {
   const body = article.contentHtml?.trim() || `<p>${article.title}</p>`;
   // useProxy routes the cross-origin image fetches through /api/img on web; on
   // Tauri the bundler hits the network directly (no CORS), ignoring the flag.
   const bundle = await bundleAssets(body, article.url || '', { useProxy: true });
+  const author = article.author || article.feedTitle || '';
+  const favicon = await fetchFavicon(article.feedIconUrl);
+  const cover = generateCoverSvg({
+    title: article.title || '(untitled)',
+    siteName: article.feedTitle || '',
+    author,
+    favicon,
+  });
   const { file } = await htmlToBook(
     bundle.html,
     article.title || '(untitled)',
-    article.author || article.feedTitle || '',
+    author,
     article.url || article.id,
     bundle.images,
+    cover,
   );
   return file;
 }

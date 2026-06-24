@@ -24,6 +24,8 @@ export interface FreshRSSArticle {
   id: string;
   feedId: string;
   feedTitle: string;
+  /** The source feed's icon/favicon URL, used to build the article cover/header. */
+  feedIconUrl?: string;
   /** Folder/category label paths the article is in, e.g. "News/Israel". */
   categories: string[];
   title: string;

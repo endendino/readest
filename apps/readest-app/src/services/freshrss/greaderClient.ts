@@ -10,13 +10,14 @@ export function parseTagList(json: { tags?: { id: string }[] }): FreshRSSFolder[
 }
 
 export function parseSubscriptions(json: {
-  subscriptions?: { id: string; title: string; categories?: { id: string }[] }[];
+  subscriptions?: { id: string; title: string; iconUrl?: string; categories?: { id: string }[] }[];
 }): FreshRSSFeed[] {
   return (json.subscriptions ?? []).map((s) => ({
     id: s.id,
     title: s.title,
     folderId: s.categories?.[0]?.id ?? null,
     unreadCount: 0,
+    iconUrl: s.iconUrl || undefined,
   }));
 }
 

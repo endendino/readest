@@ -172,16 +172,11 @@ export const ArticleList = () => {
   };
 
   // First tap on the title opens the quick view; a second tap opens the full
-  // article in the reader. On first expand, auto-summarize blurb-less articles
-  // (the "both" behaviour) — articles that already have a real blurb keep it
-  // unless the user taps the Summarize button.
+  // article in the reader. Summaries are NOT auto-generated — the user taps the
+  // Summarize button, and the summary is added below the blurb (not a replacement).
   const onTitleClick = (a: FreshRSSArticle) => {
-    if (expandedId === a.id) {
-      void openArticle(a);
-      return;
-    }
-    setExpandedId(a.id);
-    if (!hasBlurb(a) && !summaries[a.id]) void runSummary(a, true);
+    if (expandedId === a.id) void openArticle(a);
+    else setExpandedId(a.id);
   };
 
   // Dismiss without opening: drop it from the queue immediately (snappy) and
@@ -259,19 +254,27 @@ export const ArticleList = () => {
               {expanded && (
                 <div className='px-4 pb-3'>
                   <p dir='auto' className='text-base-content/80 text-sm leading-relaxed'>
-                    {summaries[a.id] ?? quickViewText(a)}
+                    {quickViewText(a)}
                   </p>
                   {summarizing.has(a.id) && (
-                    <span className='text-base-content/50 mt-1 flex items-center gap-1 text-xs'>
+                    <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
                       <span className='loading loading-spinner loading-xs' />
                       {_('Summarizing…')}
                     </span>
                   )}
                   {summaries[a.id] && (
-                    <span className='text-base-content/40 mt-1 flex items-center gap-1 text-xs'>
-                      <MdAutoAwesome className='h-3 w-3' />
-                      {_('AI summary')}
-                    </span>
+                    <div
+                      dir='auto'
+                      className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
+                    >
+                      <span className='text-base-content/50 mb-1 flex items-center gap-1 text-xs font-medium'>
+                        <MdAutoAwesome className='h-3.5 w-3.5' />
+                        {_('AI summary')}
+                      </span>
+                      <p className='text-base-content/80 text-sm leading-relaxed'>
+                        {summaries[a.id]}
+                      </p>
+                    </div>
                   )}
                   <div className='mt-3 flex items-center justify-center gap-2'>
                     <button

@@ -60,7 +60,12 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
     });
     try {
       const page = await new FreshRSSClient().getUnread(streamId, 40);
-      set({ articles: page.articles, continuation: page.continuation, loading: false });
+      const feeds = get().feeds;
+      const articles = page.articles.map((a) => ({
+        ...a,
+        feedIconUrl: feeds.find((f) => f.id === a.feedId)?.iconUrl,
+      }));
+      set({ articles, continuation: page.continuation, loading: false });
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
@@ -72,7 +77,12 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
     set({ loading: true });
     try {
       const page = await new FreshRSSClient().getUnread(currentStreamId, 40, continuation);
-      set({ articles: [...articles, ...page.articles], continuation: page.continuation, loading: false });
+      const feeds = get().feeds;
+      const more = page.articles.map((a) => ({
+        ...a,
+        feedIconUrl: feeds.find((f) => f.id === a.feedId)?.iconUrl,
+      }));
+      set({ articles: [...articles, ...more], continuation: page.continuation, loading: false });
     } catch (e) {
       set({ loading: false, error: String(e) });
     }
