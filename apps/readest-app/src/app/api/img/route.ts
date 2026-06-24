@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import sharp from 'sharp';
 
 // Server-side image proxy for the FreshRSS article view. The browser can't
 // fetch third-party article images (CORS), so the asset bundler routes its
-// fetches through here when building the article EPUB. Returns the raw image
-// bytes with the upstream content-type.
+// fetches through here when building the article EPUB. Raster images are
+// downscaled + re-encoded to WebP server-side so the (mobile) client only ever
+// downloads a small version — high enough quality for a phone screen, no larger.
 //
 // Reachable only behind the app's auth gate (Caddy basic_auth), so it isn't a
 // public open proxy; we still enforce http(s) + an image content-type + a size
@@ -11,6 +13,14 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const TIMEOUT_MS = 10_000;
+// Mobile-first defaults: cap the long edge and re-encode at a quality that's
+// crisp on a phone (incl. hi-DPI) without shipping desktop-sized originals.
+// Override the width per-request with ?w= (clamped). Tune via env if needed.
+const DEFAULT_MAX_WIDTH = Number(process.env['IMG_MAX_WIDTH']) || 1080;
+const WEBP_QUALITY = Number(process.env['IMG_QUALITY']) || 72;
+// Only raster formats sharp can resize cleanly; SVG (vector) and GIF (possibly
+// animated) pass through untouched.
+const RESIZABLE = /^image\/(jpe?g|png|webp|avif)$/;
 
 const isBlockedHost = (host: string): boolean => {
   const h = host.toLowerCase().replace(/^\[|\]$/g, '');
@@ -30,6 +40,8 @@ export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url');
   const referer = request.nextUrl.searchParams.get('referer') || undefined;
   if (!url) return NextResponse.json({ error: 'missing url' }, { status: 400 });
+  const wParam = Number(request.nextUrl.searchParams.get('w'));
+  const maxWidth = Number.isFinite(wParam) && wParam >= 64 ? Math.min(wParam, 2000) : DEFAULT_MAX_WIDTH;
 
   let target: URL;
   try {
@@ -79,6 +91,26 @@ export async function GET(request: NextRequest) {
   if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) {
     return NextResponse.json({ error: 'bad size' }, { status: 502 });
   }
+
+  // Downscale + re-encode raster images to WebP so the client gets a small,
+  // phone-appropriate file. SVG/GIF pass through; any sharp failure falls back
+  // to the original bytes so a quirky image never breaks the article.
+  if (RESIZABLE.test(contentType)) {
+    try {
+      const out = await sharp(Buffer.from(buf), { failOn: 'none' })
+        .rotate() // honor EXIF orientation before stripping metadata
+        .resize({ width: maxWidth, withoutEnlargement: true })
+        .webp({ quality: WEBP_QUALITY })
+        .toBuffer();
+      return new NextResponse(new Uint8Array(out), {
+        status: 200,
+        headers: { 'Content-Type': 'image/webp', 'Cache-Control': 'private, max-age=86400' },
+      });
+    } catch {
+      /* fall through to returning the original bytes */
+    }
+  }
+
   return new NextResponse(buf, {
     status: 200,
     headers: { 'Content-Type': contentType, 'Cache-Control': 'private, max-age=86400' },
