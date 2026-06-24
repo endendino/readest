@@ -46,6 +46,7 @@ export const FeedSaveButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
         article.contentHtml,
         settings.webdav,
         collectArticleHighlights(getConfig(bookKey)),
+        fr.obsidianFolder,
       );
       setSaved(true);
       eventDispatcher.dispatch('toast', {

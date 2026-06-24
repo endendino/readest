@@ -113,6 +113,10 @@ export interface FreshRSSSettings {
   apiPassword: string;
   /** Push article highlights to Obsidian on "Done". */
   exportToObsidian: boolean;
+  /** WebDAV path (relative to the WebDAV root) where article clips are written,
+   *  e.g. "Obsidian/Readest" or "Obsidian/personal/marginalia/Readest". Must line
+   *  up with whatever your Obsidian WebDAV-sync plugin pulls into the vault. */
+  obsidianFolder: string;
   /** When true, finishing an RSVP run auto-advances to the next unread. */
   autoAdvanceOnRsvpEnd: boolean;
 }

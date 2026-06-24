@@ -54,6 +54,7 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
             article.contentHtml,
             settings.webdav,
             highlights,
+            fr.obsidianFolder,
           );
         }
       }

@@ -216,6 +216,7 @@ export async function exportFullArticle(
   html: string,
   webdav: Pick<WebDAVSettings, 'serverUrl' | 'username' | 'password'>,
   highlights: ArticleHighlight[] = [],
+  folder = 'Obsidian/Readest',
 ): Promise<void> {
   if (!webdav.serverUrl) {
     throw new Error('WebDAV is not configured (required for Obsidian save)');
@@ -223,7 +224,15 @@ export async function exportFullArticle(
   const date = meta.publishedAt ? new Date(meta.publishedAt).toISOString().slice(0, 10) : 'undated';
   const safeTitle = (meta.title || 'article').split('/').join('-').trim().slice(0, 80) || 'article';
   const base = webdav.serverUrl.replace(/\/+$/, '');
-  const url = `${base}/Obsidian/Readest/${encodeURIComponent(`${date}-${safeTitle}.md`)}`;
+  // Per-segment encode so nested folders (e.g. Obsidian/personal/marginalia/Readest)
+  // are preserved; nginx `create_full_put_path` auto-creates the parents on PUT.
+  const folderPath = (folder || 'Obsidian/Readest')
+    .split('/')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  const url = `${base}/${folderPath}/${encodeURIComponent(`${date}-${safeTitle}.md`)}`;
   const authHeader: Record<string, string> =
     webdav.username || webdav.password
       ? { Authorization: `Basic ${btoa(`${webdav.username}:${webdav.password}`)}` }

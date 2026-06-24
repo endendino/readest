@@ -92,6 +92,7 @@ export const DEFAULT_FRESHRSS_SETTINGS = {
   username: '',
   apiPassword: '',
   exportToObsidian: false,
+  obsidianFolder: 'Obsidian/Readest',
   autoAdvanceOnRsvpEnd: true,
 } as FreshRSSSettings;
 

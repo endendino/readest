@@ -25,6 +25,7 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
   const [isTesting, setIsTesting] = useState(false);
   const [result, setResult] = useState<{ folders: FreshRSSFolder[]; feeds: FreshRSSFeed[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [obsidianFolder, setObsidianFolder] = useState(fr?.obsidianFolder ?? 'Obsidian/Readest');
 
   const persist = async (next: Partial<FreshRSSSettings>) => {
     const newSettings = { ...settings, freshrss: { ...settings.freshrss, ...next } };
@@ -133,6 +134,24 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
                 onChange={() => persist({ exportToObsidian: !fr?.exportToObsidian })}
               />
             </label>
+            <div className='space-y-1.5 px-4 py-3'>
+              <SettingLabel>{_('Obsidian clip folder')}</SettingLabel>
+              <input
+                type='text'
+                className='input input-bordered eink-bordered h-10 w-full text-sm focus:outline-none'
+                spellCheck='false'
+                autoCapitalize='off'
+                placeholder='Obsidian/Readest'
+                value={obsidianFolder}
+                onChange={(e) => setObsidianFolder(e.target.value)}
+                onBlur={() => persist({ obsidianFolder: obsidianFolder.trim() || 'Obsidian/Readest' })}
+              />
+              <p className='text-base-content/50 text-xs'>
+                {_(
+                  'WebDAV path where article clips are saved (relative to the WebDAV root). Must sit inside the folder your Obsidian WebDAV-sync plugin pulls into the vault.',
+                )}
+              </p>
+            </div>
             <label className='flex min-h-14 items-center justify-between px-4'>
               <SettingLabel>{_('Auto-advance when RSVP finishes')}</SettingLabel>
               <input
