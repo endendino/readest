@@ -161,11 +161,29 @@ export function htmlToMarkdown(html: string): string {
     .trim();
 }
 
+/** Render the highlights as a `## Highlights` bullet list (each optionally
+ *  followed by its note). Empty string when there are none. */
+const renderHighlightsSection = (highlights: ArticleHighlight[]): string => {
+  if (highlights.length === 0) return '';
+  const body = highlights
+    .map((h) => {
+      const line = `- ${h.text.trim()}`;
+      return h.note && h.note.trim() ? `${line}\n  - ${h.note.trim()}` : line;
+    })
+    .join('\n');
+  return `\n## Highlights\n\n${body}\n`;
+};
+
 /**
  * Render a full-article Obsidian note: YAML frontmatter (title/author/date/
- * created/source/tags) + a `# title` heading + the body as Markdown.
+ * created/source/tags) + a `# title` heading + the body as Markdown, with any
+ * highlights appended as a `## Highlights` section so one note has everything.
  */
-export function renderFullArticleMarkdown(meta: FullArticleMeta, html: string): string {
+export function renderFullArticleMarkdown(
+  meta: FullArticleMeta,
+  html: string,
+  highlights: ArticleHighlight[] = [],
+): string {
   const pub = meta.publishedAt ? new Date(meta.publishedAt).toISOString().slice(0, 10) : '';
   const created = new Date().toISOString().slice(0, 10);
   const tags = [
@@ -185,17 +203,19 @@ export function renderFullArticleMarkdown(meta: FullArticleMeta, html: string): 
   ]
     .filter(Boolean)
     .join('\n');
-  return `${frontmatter}\n\n# ${meta.title}\n\n${htmlToMarkdown(html)}\n`;
+  return `${frontmatter}\n\n# ${meta.title}\n\n${htmlToMarkdown(html)}\n${renderHighlightsSection(highlights)}`;
 }
 
 /**
- * Save the full article as a Markdown note to the user's WebDAV server under
- * `Obsidian/Readest/`, then surface in their vault via the remotely-save plugin.
+ * Save the full article (+ any highlights) as a Markdown note to the user's
+ * WebDAV server under `Obsidian/Readest/`, surfaced in their vault via the
+ * remotely-save plugin.
  */
 export async function exportFullArticle(
   meta: FullArticleMeta,
   html: string,
   webdav: Pick<WebDAVSettings, 'serverUrl' | 'username' | 'password'>,
+  highlights: ArticleHighlight[] = [],
 ): Promise<void> {
   if (!webdav.serverUrl) {
     throw new Error('WebDAV is not configured (required for Obsidian save)');
@@ -211,7 +231,7 @@ export async function exportFullArticle(
   const res = await fetch(url, {
     method: 'PUT',
     headers: { ...authHeader, 'Content-Type': 'text/markdown; charset=utf-8' },
-    body: renderFullArticleMarkdown(meta, html),
+    body: renderFullArticleMarkdown(meta, html, highlights),
   });
   if (!res.ok) throw new Error(`Obsidian save failed: HTTP ${res.status}`);
 }

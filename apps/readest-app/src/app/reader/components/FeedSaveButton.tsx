@@ -4,19 +4,22 @@ import { useState } from 'react';
 import { SiObsidian } from 'react-icons/si';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
+import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
 import { exportFullArticle } from '@/services/freshrss/obsidianExport';
 import { eventDispatcher } from '@/utils/event';
 
 /**
  * Floating "save full article to Obsidian" button, shown only while reading a
- * FreshRSS feed article. Writes the whole article as a Markdown note (rich YAML
- * frontmatter: title/author/date/created/source/tags) to the user's WebDAV
- * server under Obsidian/Readest/, which their vault syncs via remotely-save.
+ * FreshRSS feed article. Writes the whole article (plus any highlights you made)
+ * as a Markdown note (rich YAML frontmatter: title/author/date/created/source/
+ * tags) to WebDAV under Obsidian/Readest/, synced into the vault by remotely-save.
  */
-export const FeedSaveButton = ({ bookHash }: { bookHash: string }) => {
+export const FeedSaveButton = ({ bookKey, bookHash }: { bookKey: string; bookHash: string }) => {
   const _ = useTranslation();
   const { settings } = useSettingsStore();
+  const { getConfig } = useBookDataStore();
   const entry = useFeedsStore((s) => s.openArticles[bookHash]);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -42,6 +45,7 @@ export const FeedSaveButton = ({ bookHash }: { bookHash: string }) => {
         },
         article.contentHtml,
         settings.webdav,
+        collectArticleHighlights(getConfig(bookKey)),
       );
       setSaved(true);
       eventDispatcher.dispatch('toast', {

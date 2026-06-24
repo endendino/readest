@@ -275,7 +275,7 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
       {isSettingsDialogOpen && <SettingsDialog bookKey={settingsDialogBookKey} />}
       <Notebook />
       <FeedDoneButton bookKey={bookKeys[0]!} bookHash={bookData.book.hash} />
-      <FeedSaveButton bookHash={bookData.book.hash} />
+      <FeedSaveButton bookKey={bookKeys[0]!} bookHash={bookData.book.hash} />
       {showDetailsBook && (
         <BookDetailModal
           isOpen={!!showDetailsBook}

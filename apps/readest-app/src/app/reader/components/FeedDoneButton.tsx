@@ -8,7 +8,8 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
-import { exportArticleHighlights } from '@/services/freshrss/obsidianExport';
+import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
+import { exportFullArticle } from '@/services/freshrss/obsidianExport';
 import { eventDispatcher } from '@/utils/event';
 
 /**
@@ -22,7 +23,7 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
   const _ = useTranslation();
   const router = useRouter();
   const { settings } = useSettingsStore();
-  const { getConfig, getBookData } = useBookDataStore();
+  const { getConfig } = useBookDataStore();
   const entry = useFeedsStore((s) => s.openArticles[bookHash]);
   const [busy, setBusy] = useState(false);
 
@@ -33,23 +34,26 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
     if (busy) return;
     setBusy(true);
     try {
-      // Export highlights to Obsidian FIRST, so a failure surfaces before the
-      // article is marked read (and thus before it leaves the queue).
+      // Export to Obsidian FIRST, so a failure surfaces before the article is
+      // marked read (and thus before it leaves the queue). Only writes a note
+      // when you actually highlighted something (avoids saving every finished
+      // article); the note is the full article + highlights — same file/shape
+      // the Obsidian save button writes, so the two paths don't clobber.
       if (fr.exportToObsidian) {
-        const highlights = (getConfig(bookKey)?.booknotes ?? [])
-          .filter((n) => !n.deletedAt && (n.type === 'annotation' || n.type === 'excerpt') && n.text)
-          .map((n) => ({ text: n.text as string, note: n.note }));
-        if (highlights.length > 0) {
-          const article = useFeedsStore.getState().articles.find((a) => a.id === entry.greaderId);
-          await exportArticleHighlights(
+        const highlights = collectArticleHighlights(getConfig(bookKey));
+        const article = useFeedsStore.getState().articles.find((a) => a.id === entry.greaderId);
+        if (highlights.length > 0 && article) {
+          await exportFullArticle(
             {
-              title: article?.title ?? getBookData(bookKey)?.book?.title ?? 'Article',
-              url: article?.url ?? '',
-              feedTitle: article?.feedTitle ?? '',
-              publishedAt: article?.publishedAt ?? 0,
+              title: article.title,
+              author: article.author,
+              url: article.url,
+              publishedAt: article.publishedAt,
+              categories: article.categories,
             },
-            highlights,
+            article.contentHtml,
             settings.webdav,
+            highlights,
           );
         }
       }
