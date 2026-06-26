@@ -126,6 +126,21 @@ export async function buildEpub(
     );
   }
 
+  // Direction from CONTENT, not the first character. `dir="auto"` resolves on the
+  // first strong directional char, so a leading Latin word (e.g. a "Ynet" source
+  // name in the article masthead) flips a Hebrew article LTR. Count Hebrew/Arabic
+  // vs Latin strong chars over the body instead. Drives both the body alignment
+  // and the spine page-progression below.
+  const rtlSample = chapters
+    .map((c) => c.html)
+    .join(' ')
+    .replace(/<[^>]+>/g, '')
+    .slice(0, 2000);
+  const rtlCount = (rtlSample.match(/[֐-ࣿ]/g) || []).length;
+  const ltrCount = (rtlSample.match(/[A-Za-z]/g) || []).length;
+  const isRtl = rtlCount > ltrCount;
+  const bodyDir = isRtl ? 'rtl' : 'ltr';
+
   for (let i = 0; i < chapters.length; i++) {
     const chapter = chapters[i]!;
     const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -135,7 +150,7 @@ export async function buildEpub(
     <title>${escapeXml(chapter.title)}</title>
     <link rel="stylesheet" type="text/css" href="../style.css"/>
   </head>
-  <body dir="auto">${chapter.html}</body>
+  <body dir="${bodyDir}">${chapter.html}</body>
 </html>`;
     await zipWriter.add(`OEBPS/chapter${i + 1}.xhtml`, new TextReader(xhtml), zipWriteOptions);
   }
@@ -164,17 +179,10 @@ export async function buildEpub(
     .filter((line) => line.length > 0)
     .join('\n    ');
 
-  // RTL page progression (page-turn direction + left/right keys). dir="auto" on
-  // <body> only fixes text alignment; the spine attribute is what makes the
-  // reader treat the book as RTL. Detect from content (Hebrew/Arabic ranges).
-  const rtlSample = chapters
-    .map((c) => c.html)
-    .join(' ')
-    .replace(/<[^>]+>/g, '')
-    .slice(0, 1000);
-  const rtlCount = (rtlSample.match(/[֐-ࣿ]/g) || []).length;
-  const ltrCount = (rtlSample.match(/[A-Za-z]/g) || []).length;
-  const pageDir = rtlCount > ltrCount ? ' page-progression-direction="rtl"' : '';
+  // RTL page progression (page-turn direction + left/right keys). The body dir
+  // above only fixes text alignment; the spine attribute is what makes the
+  // reader treat the book as RTL. Reuse the content-derived direction.
+  const pageDir = isRtl ? ' page-progression-direction="rtl"' : '';
 
   const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="2.0">

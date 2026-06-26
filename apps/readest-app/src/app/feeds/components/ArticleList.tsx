@@ -59,6 +59,23 @@ const stripText = (html: string): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
+// Hebrew/Arabic and other RTL blocks. `dir='auto'` only inspects the FIRST
+// strong character, so a Hebrew article whose title/blurb opens with a Latin
+// brand name, acronym, or quoted English ("BBC: …") is wrongly laid out LTR.
+// Decide by the MAJORITY of strong characters instead — robust for mixed
+// Hebrew/English news strings.
+const RTL_CHAR = /[֐-׿؀-ۿ܀-ݏݐ-ݿࢠ-ࣿיִ-﷿ﹰ-﻿]/;
+const LTR_CHAR = /[A-Za-zÀ-ɏ]/;
+const textDir = (s: string): 'rtl' | 'ltr' => {
+  let rtl = 0;
+  let ltr = 0;
+  for (const ch of s) {
+    if (RTL_CHAR.test(ch)) rtl++;
+    else if (LTR_CHAR.test(ch)) ltr++;
+  }
+  return rtl > ltr ? 'rtl' : 'ltr';
+};
+
 const firstParagraph = (html: string) => {
   const m = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
   return stripText(m ? m[1]! : html);
@@ -94,17 +111,25 @@ const quickViewText = (a: FreshRSSArticle) => {
   return text.length > QUICK_VIEW_MAX ? `${text.slice(0, QUICK_VIEW_MAX).trim()}…` : text;
 };
 
-/** Ask the server (Claude) to summarize an article. Returns the summary text,
- *  or throws on failure (incl. 501 when ANTHROPIC_API_KEY isn't configured). */
-const fetchSummary = async (a: FreshRSSArticle): Promise<string> => {
+/** Ask the server to summarize an article. Sends the blurb the reader already
+ *  saw so the model only adds what the blurb doesn't cover. `redundant` is true
+ *  when the article adds nothing beyond the blurb. Throws on real failure
+ *  (incl. 501 when SUMMARY_API_KEY isn't configured). */
+const fetchSummary = async (
+  a: FreshRSSArticle,
+): Promise<{ summary: string; redundant: boolean }> => {
   const res = await fetch('/api/summarize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: stripText(a.contentHtml) }),
+    body: JSON.stringify({ text: stripText(a.contentHtml), blurb: quickViewText(a) }),
   });
-  const data = (await res.json().catch(() => null)) as { summary?: string; error?: string } | null;
-  if (!res.ok || !data?.summary) throw new Error(data?.error || `summarize ${res.status}`);
-  return data.summary;
+  const data = (await res.json().catch(() => null)) as
+    | { summary?: string; redundant?: boolean; error?: string }
+    | null;
+  if (!res.ok || !data) throw new Error(data?.error || `summarize ${res.status}`);
+  if (data.redundant) return { summary: '', redundant: true };
+  if (!data.summary) throw new Error(data.error || `summarize ${res.status}`);
+  return { summary: data.summary, redundant: false };
 };
 
 const SWIPE_THRESHOLD = 80;
@@ -172,6 +197,8 @@ export const ArticleList = () => {
   const [opening, setOpening] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState<Set<string>>(new Set());
+  // Articles whose summary came back "nothing to add beyond the blurb".
+  const [noAdd, setNoAdd] = useState<Set<string>>(new Set());
   const fr = settings.freshrss;
 
   // Generate (or regenerate) the LLM summary for an article. `silent` suppresses
@@ -180,8 +207,16 @@ export const ArticleList = () => {
   const runSummary = async (a: FreshRSSArticle, silent = false) => {
     if (summarizing.has(a.id)) return;
     setSummarizing((prev) => new Set(prev).add(a.id));
+    setNoAdd((prev) => {
+      if (!prev.has(a.id)) return prev;
+      const next = new Set(prev);
+      next.delete(a.id);
+      return next;
+    });
     try {
-      setSummary(a.id, await fetchSummary(a));
+      const { summary, redundant } = await fetchSummary(a);
+      if (redundant) setNoAdd((prev) => new Set(prev).add(a.id));
+      else setSummary(a.id, summary);
     } catch (e) {
       if (!silent) {
         eventDispatcher.dispatch('toast', {
@@ -255,13 +290,16 @@ export const ArticleList = () => {
       {articles.map((a) => {
         const expanded = expandedId === a.id;
         const wc = wordCount(a);
+        // One direction per article (from the title) so the title, byline, blurb
+        // and AI summary all align consistently — see textDir for why not auto.
+        const dir = textDir(a.title);
         return (
           <SwipeRow key={a.id} onDismiss={() => void dismiss(a)}>
             <div className={expanded ? 'border-base-300 bg-base-200/30 border-y-2' : 'bg-base-100'}>
               <div className='flex items-stretch'>
                 <button
                   type='button'
-                  dir='auto'
+                  dir={dir}
                   onClick={() => onTitleClick(a)}
                   disabled={opening !== null}
                   className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
@@ -295,7 +333,7 @@ export const ArticleList = () => {
               </div>
               {expanded && (
                 <div className='px-4 pb-3'>
-                  <p dir='auto' className='text-base-content/80 text-sm leading-relaxed'>
+                  <p dir={dir} className='text-base-content/80 text-sm leading-relaxed'>
                     {quickViewText(a)}
                   </p>
                   {summarizing.has(a.id) && (
@@ -306,17 +344,23 @@ export const ArticleList = () => {
                   )}
                   {summaries[a.id] && (
                     <div
-                      dir='auto'
+                      dir={dir}
                       className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
                     >
                       <span className='text-base-content/50 mb-1 flex items-center gap-1 text-xs font-medium'>
                         <MdAutoAwesome className='h-3.5 w-3.5' />
                         {_('AI summary')}
                       </span>
-                      <p dir='auto' className='text-base-content/80 text-sm leading-relaxed'>
+                      <p dir={dir} className='text-base-content/80 text-sm leading-relaxed'>
                         {summaries[a.id]}
                       </p>
                     </div>
+                  )}
+                  {noAdd.has(a.id) && !summaries[a.id] && (
+                    <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
+                      <MdAutoAwesome className='h-3.5 w-3.5' />
+                      {_('The blurb already covers it — nothing to add.')}
+                    </span>
                   )}
                   <div className='mt-3 flex items-center justify-center gap-2'>
                     <button

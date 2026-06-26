@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   const model = process.env['SUMMARY_MODEL'] || DEFAULT_MODEL;
   const baseUrl = (process.env['SUMMARY_BASE_URL'] || DEFAULT_BASE_URL).replace(/\/+$/, '');
 
-  let payload: { text?: string };
+  let payload: { text?: string; blurb?: string };
   try {
     payload = await request.json();
   } catch {
@@ -43,6 +43,25 @@ export async function POST(request: NextRequest) {
   if (!text) {
     return NextResponse.json({ error: 'missing text' }, { status: 400 });
   }
+  // The reader has already read the blurb; the summary should COMPLEMENT it, not
+  // restate it. Pass it through so the model can skip what's already covered.
+  const blurb = (payload.blurb ?? '').trim().slice(0, 1500);
+
+  const systemPrompt = blurb
+    ? 'You summarize a news article for a reader who has ALREADY read the blurb shown below. ' +
+      'Write 1–2 sentences covering ONLY the important points the blurb does NOT already mention — ' +
+      'new facts, context, consequences, or details that add to it. ' +
+      'Do NOT repeat or rephrase anything already in the blurb. ' +
+      'If the article adds nothing beyond the blurb, reply with the single word NONE. ' +
+      'Always respond in the SAME language as the article. ' +
+      'Output ONLY the summary text — no preamble, no quotes, no labels, no markdown.'
+    : 'You write a concise 1–2 sentence summary (a sub-headline) of a news article. ' +
+      'Always respond in the SAME language as the article. ' +
+      'Output ONLY the summary text — no preamble, no quotes, no labels, no markdown.';
+
+  const userPrompt = blurb
+    ? `BLURB the reader has already read:\n${blurb}\n\nFULL ARTICLE:\n${text}`
+    : `Summarize this article:\n\n${text}`;
 
   let upstream: Response;
   try {
@@ -53,14 +72,8 @@ export async function POST(request: NextRequest) {
         model,
         max_tokens: 300,
         messages: [
-          {
-            role: 'system',
-            content:
-              'You write a concise 1–2 sentence summary (a sub-headline) of a news article. ' +
-              'Always respond in the SAME language as the article. ' +
-              'Output ONLY the summary text — no preamble, no quotes, no labels, no markdown.',
-          },
-          { role: 'user', content: `Summarize this article:\n\n${text}` },
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
         ],
       }),
       signal: AbortSignal.timeout(25_000),
@@ -83,6 +96,11 @@ export async function POST(request: NextRequest) {
   const summary = data?.choices?.[0]?.message?.content?.trim() ?? '';
   if (!summary) {
     return NextResponse.json({ error: 'empty summary' }, { status: 502 });
+  }
+  // Model says the blurb already covers everything — tell the client so it can
+  // skip showing a redundant box rather than printing "NONE".
+  if (blurb && /^none[.!]?$/i.test(summary)) {
+    return NextResponse.json({ summary: '', redundant: true });
   }
   return NextResponse.json({ summary });
 }
