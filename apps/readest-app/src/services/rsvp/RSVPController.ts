@@ -1433,7 +1433,18 @@ export class RSVPController extends EventTarget {
     doc: Document,
     docIndex: number,
   ): RsvpWord[] {
-    const excludeTags = new Set(['SCRIPT', 'STYLE', 'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
+    // FIGCAPTION: a photo caption/credit is meta-text about an image you can't see
+    // in RSVP, so it's noise — skip it like the other non-body chrome. Matters most
+    // for feed articles, which deliver captions as <figure><figcaption>.
+    const excludeTags = new Set([
+      'SCRIPT',
+      'STYLE',
+      'NAV',
+      'HEADER',
+      'FOOTER',
+      'ASIDE',
+      'FIGCAPTION',
+    ]);
     const words: RsvpWord[] = [];
     const view = doc.defaultView;
     // The first word inside each block-level box is flagged as a paragraph start
