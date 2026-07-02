@@ -78,6 +78,12 @@ COPY --from=build --chown=node:node /app/apps/readest-app/public ./apps/readest-
 # committed kill-switch from the build stage's public/. Copy it straight from
 # the build context (after the public/ copy above) so the final image serves it.
 COPY --chown=node:node apps/readest-app/public/sw.js ./apps/readest-app/public/sw.js
+# The `COPY --from=build public` layer above can serve a STALE cached layer for
+# newly-added static files (a BuildKit content-cache quirk — the layer was
+# cached on an earlier build and doesn't reliably invalidate when a file is
+# added to public/). Our reader/RSVP fonts are git-tracked, so copy them
+# straight from the build context to guarantee new woff2 files always ship.
+COPY --chown=node:node apps/readest-app/public/fonts ./apps/readest-app/public/fonts
 # sharp ships a platform-specific native binary that the Next standalone trace
 # doesn't reliably carry through pnpm's symlinked layout (the server then 500s
 # with "Could not load the sharp module"). Install it straight into the
