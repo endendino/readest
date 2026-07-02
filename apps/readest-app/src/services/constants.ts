@@ -489,6 +489,13 @@ export const MONOSPACE_FONTS = [
 
 export const FALLBACK_FONTS = ['MiSans L3'];
 
+// Self-hosted Open Sans, subset to the Hebrew block only. Prepended to the
+// reader font stacks and @font-face'd (with a Hebrew unicode-range) into the
+// reader iframe so Hebrew glyphs always render in Open Sans while Latin text
+// keeps the reader's configured font — per-glyph, no language detection. The
+// family name is shared so the stack entry and the @font-face never drift.
+export const HEBREW_FONT_FAMILY = 'Open Sans Hebrew';
+
 export const WINDOWS_FONTS = [
   'Arial',
   'Arial Black',

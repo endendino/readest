@@ -1,3 +1,4 @@
+import { HEBREW_FONT_FAMILY } from '@/services/constants';
 import { isCJKEnv } from '@/utils/misc';
 import { getFilename } from '@/utils/path';
 import { md5Fingerprint } from '@/utils/md5';
@@ -93,15 +94,41 @@ const getAdditionalCJKFontFaces = () => `
 }
 `;
 
+// Self-hosted Open Sans (Hebrew subset), @font-face'd with a Hebrew-only
+// unicode-range so it claims Hebrew glyphs but never Latin. Served first-party
+// from /fonts (no Google request, works offline) and prepended to the reader
+// font stacks in buildFontFamilyLists. Absolute URL so it resolves to the app
+// origin regardless of the iframe document's (blob) base URL.
+const getSelfHostedFontFaces = () => {
+  const origin = globalThis.location?.origin ?? '';
+  // Hebrew block + Hebrew presentation forms.
+  const unicodeRange = 'U+0590-05FF, U+FB1D-FB4F';
+  return [400, 700]
+    .map(
+      (weight) => `
+  @font-face {
+    font-family: "${HEBREW_FONT_FAMILY}";
+    font-style: normal;
+    font-weight: ${weight};
+    font-display: swap;
+    src: url("${origin}/fonts/OpenSans-Hebrew-${weight}.woff2") format("woff2");
+    unicode-range: ${unicodeRange};
+  }`,
+    )
+    .join('\n');
+};
+
 export const mountAdditionalFonts = async (document: Document, isCJK = false) => {
   const mountCJKFonts = isCJK || isCJKEnv();
 
   // Mount font stylesheets and @font-face rules
   let links = getAdditionalBasicFontLinks();
-  let fontFaces = '';
+  // Always mount the self-hosted Hebrew Open Sans face (all languages, not just
+  // CJK) so Hebrew reading text resolves to it.
+  let fontFaces = getSelfHostedFontFaces();
 
   if (mountCJKFonts) {
-    fontFaces = getAdditionalCJKFontFaces();
+    fontFaces = `${fontFaces}\n${getAdditionalCJKFontFaces()}`;
     links = `${links}\n${getAdditionalCJKFontLinks()}`;
   }
 
