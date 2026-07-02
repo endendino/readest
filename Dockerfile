@@ -73,6 +73,11 @@ COPY --from=build --chown=node:node /app/apps/readest-app/.next/standalone ./
 # to the server so their default relative paths resolve.
 COPY --from=build --chown=node:node /app/apps/readest-app/.next/static ./apps/readest-app/.next/static
 COPY --from=build --chown=node:node /app/apps/readest-app/public ./apps/readest-app/public
+# The web build runs under Turbopack, so @serwist/next no-ops the SW generation
+# but still clears its swDest (public/sw.js) during `next build`, deleting our
+# committed kill-switch from the build stage's public/. Copy it straight from
+# the build context (after the public/ copy above) so the final image serves it.
+COPY --chown=node:node apps/readest-app/public/sw.js ./apps/readest-app/public/sw.js
 # sharp ships a platform-specific native binary that the Next standalone trace
 # doesn't reliably carry through pnpm's symlinked layout (the server then 500s
 # with "Could not load the sharp module"). Install it straight into the
