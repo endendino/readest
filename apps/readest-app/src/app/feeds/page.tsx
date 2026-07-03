@@ -13,7 +13,8 @@ export default function FeedsPage() {
   const _ = useTranslation();
   const router = useRouter();
   const { settings } = useSettingsStore();
-  const { currentStreamId, currentTitle, clearCurrentStream, loadFoldersAndFeeds } = useFeedsStore();
+  const { currentStreamId, currentTitle, clearCurrentStream, loadFoldersAndFeeds } =
+    useFeedsStore();
   const fr = settings.freshrss;
 
   useEffect(() => {
@@ -28,7 +29,12 @@ export default function FeedsPage() {
   return (
     <div className='bg-base-100 mx-auto flex h-dvh w-full max-w-3xl flex-col'>
       <header className='border-base-200 flex items-center gap-2 border-b px-2 py-2'>
-        <button type='button' onClick={onBack} className='btn btn-ghost btn-sm btn-circle' aria-label={_('Back')}>
+        <button
+          type='button'
+          onClick={onBack}
+          className='btn btn-ghost btn-sm btn-circle'
+          aria-label={_('Back')}
+        >
           <MdArrowBack className='h-5 w-5' />
         </button>
         <h1 className='min-w-0 truncate text-lg font-semibold' dir='auto'>

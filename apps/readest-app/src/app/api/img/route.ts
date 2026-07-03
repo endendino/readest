@@ -41,7 +41,8 @@ export async function GET(request: NextRequest) {
   const referer = request.nextUrl.searchParams.get('referer') || undefined;
   if (!url) return NextResponse.json({ error: 'missing url' }, { status: 400 });
   const wParam = Number(request.nextUrl.searchParams.get('w'));
-  const maxWidth = Number.isFinite(wParam) && wParam >= 64 ? Math.min(wParam, 2000) : DEFAULT_MAX_WIDTH;
+  const maxWidth =
+    Number.isFinite(wParam) && wParam >= 64 ? Math.min(wParam, 2000) : DEFAULT_MAX_WIDTH;
 
   let target: URL;
   try {

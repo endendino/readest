@@ -31,7 +31,10 @@ export async function POST(request: NextRequest) {
   const apiPassword = process.env['FRESHRSS_API_PASSWORD'];
   if (!serverUrl || !username || !apiPassword) {
     return NextResponse.json(
-      { error: 'FreshRSS is not configured on the server (set FRESHRSS_URL, FRESHRSS_USERNAME, FRESHRSS_API_PASSWORD)' },
+      {
+        error:
+          'FreshRSS is not configured on the server (set FRESHRSS_URL, FRESHRSS_USERNAME, FRESHRSS_API_PASSWORD)',
+      },
       { status: 501, headers: CORS },
     );
   }
@@ -93,6 +96,9 @@ export async function POST(request: NextRequest) {
       headers: { ...CORS, 'Content-Type': upstream.headers.get('content-type') ?? 'text/plain' },
     });
   } catch (e) {
-    return NextResponse.json({ error: `upstream fetch failed: ${String(e)}` }, { status: 502, headers: CORS });
+    return NextResponse.json(
+      { error: `upstream fetch failed: ${String(e)}` },
+      { status: 502, headers: CORS },
+    );
   }
 }

@@ -21,7 +21,9 @@ export function parseSubscriptions(json: {
   }));
 }
 
-export function parseUnreadCounts(json: { unreadcounts?: { id: string; count: number }[] }): Map<string, number> {
+export function parseUnreadCounts(json: {
+  unreadcounts?: { id: string; count: number }[];
+}): Map<string, number> {
   const m = new Map<string, number>();
   for (const u of json.unreadcounts ?? []) m.set(u.id, u.count);
   return m;
@@ -51,7 +53,10 @@ type RawItem = {
   summary?: { content?: string };
 };
 
-export function parseStreamContents(json: { continuation?: string; items?: RawItem[] }): FreshRSSPage {
+export function parseStreamContents(json: {
+  continuation?: string;
+  items?: RawItem[];
+}): FreshRSSPage {
   const articles: FreshRSSArticle[] = (json.items ?? []).map((it) => ({
     id: it.id,
     feedId: it.origin?.streamId ?? '',
@@ -126,10 +131,14 @@ export class FreshRSSClient {
       await this.getJson<Parameters<typeof parseTagList>[0]>('/reader/api/0/tag/list?output=json'),
     );
     const feeds = parseSubscriptions(
-      await this.getJson<Parameters<typeof parseSubscriptions>[0]>('/reader/api/0/subscription/list?output=json'),
+      await this.getJson<Parameters<typeof parseSubscriptions>[0]>(
+        '/reader/api/0/subscription/list?output=json',
+      ),
     );
     const counts = parseUnreadCounts(
-      await this.getJson<Parameters<typeof parseUnreadCounts>[0]>('/reader/api/0/unread-count?output=json'),
+      await this.getJson<Parameters<typeof parseUnreadCounts>[0]>(
+        '/reader/api/0/unread-count?output=json',
+      ),
     );
     return mergeUnreadCounts(feeds, folders, counts);
   }

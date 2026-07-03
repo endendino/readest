@@ -23,7 +23,9 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
 
   const fr = settings.freshrss;
   const [isTesting, setIsTesting] = useState(false);
-  const [result, setResult] = useState<{ folders: FreshRSSFolder[]; feeds: FreshRSSFeed[] } | null>(null);
+  const [result, setResult] = useState<{ folders: FreshRSSFolder[]; feeds: FreshRSSFeed[] } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [obsidianFolder, setObsidianFolder] = useState(fr?.obsidianFolder ?? 'Obsidian/Readest');
 
@@ -44,7 +46,10 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
       await persist({ enabled: true });
     } catch (e) {
       setError(String(e));
-      eventDispatcher.dispatch('toast', { message: _('FreshRSS connection failed'), type: 'error' });
+      eventDispatcher.dispatch('toast', {
+        message: _('FreshRSS connection failed'),
+        type: 'error',
+      });
     } finally {
       setIsTesting(false);
     }
@@ -75,7 +80,11 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
               isTesting && 'opacity-60',
             )}
           >
-            {isTesting ? <span className='loading loading-spinner loading-sm' /> : _('Test Connection')}
+            {isTesting ? (
+              <span className='loading loading-spinner loading-sm' />
+            ) : (
+              _('Test Connection')
+            )}
           </button>
         </div>
 
@@ -96,7 +105,10 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
             </div>
             <div className='divide-base-200 max-h-64 divide-y overflow-y-auto'>
               {result.feeds.map((f) => (
-                <div key={f.id} className='flex items-center justify-between gap-3 px-4 py-2 text-sm'>
+                <div
+                  key={f.id}
+                  className='flex items-center justify-between gap-3 px-4 py-2 text-sm'
+                >
                   <span className='min-w-0 truncate' dir='auto'>
                     {f.title}
                   </span>
@@ -144,7 +156,9 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
                 placeholder='Obsidian/Readest'
                 value={obsidianFolder}
                 onChange={(e) => setObsidianFolder(e.target.value)}
-                onBlur={() => persist({ obsidianFolder: obsidianFolder.trim() || 'Obsidian/Readest' })}
+                onBlur={() =>
+                  persist({ obsidianFolder: obsidianFolder.trim() || 'Obsidian/Readest' })
+                }
               />
               <p className='text-base-content/50 text-xs'>
                 {_(

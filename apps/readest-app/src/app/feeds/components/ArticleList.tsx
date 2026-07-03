@@ -45,7 +45,8 @@ const decodeEntities = (s: string): string =>
   s.includes('&')
     ? s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
         if (e[0] === '#') {
-          const code = e[1]!.toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          const code =
+            e[1]!.toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
           return Number.isFinite(code) ? String.fromCodePoint(code) : m;
         }
         return ENTITIES[e.toLowerCase()] ?? m;
@@ -123,9 +124,11 @@ const fetchSummary = async (
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text: stripText(a.contentHtml), blurb: quickViewText(a) }),
   });
-  const data = (await res.json().catch(() => null)) as
-    | { summary?: string; redundant?: boolean; error?: string }
-    | null;
+  const data = (await res.json().catch(() => null)) as {
+    summary?: string;
+    redundant?: boolean;
+    error?: string;
+  } | null;
   if (!res.ok || !data) throw new Error(data?.error || `summarize ${res.status}`);
   if (data.redundant) return { summary: '', redundant: true };
   if (!data.summary) throw new Error(data.error || `summarize ${res.status}`);
@@ -191,7 +194,8 @@ const SwipeRow = ({ onDismiss, children }: { onDismiss: () => void; children: Re
 export const ArticleList = () => {
   const _ = useTranslation();
   const { settings } = useSettingsStore();
-  const { articles, loading, error, continuation, loadMore, removeArticleLocally } = useFeedsStore();
+  const { articles, loading, error, continuation, loadMore, removeArticleLocally } =
+    useFeedsStore();
   const { summaries, setSummary } = useFeedsStore();
   const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);

@@ -97,17 +97,18 @@ const yamlEscape = (s: string) => s.split('"').join("'");
 export function htmlToMarkdown(html: string): string {
   const doc = new DOMParser().parseFromString(`<div id="r">${html}</div>`, 'text/html');
   const root = doc.getElementById('r');
-  if (!root) return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!root)
+    return html
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
   const nodeToMd = (node: Node): string => {
     if (node.nodeType === 3) return (node.textContent || '').replace(/\s+/g, ' ');
     if (node.nodeType !== 1) return '';
     const el = node as Element;
     const tag = el.tagName.toLowerCase();
-    const kids = () =>
-      Array.from(el.childNodes)
-        .map(nodeToMd)
-        .join('');
+    const kids = () => Array.from(el.childNodes).map(nodeToMd).join('');
     switch (tag) {
       case 'h1':
         return `\n\n# ${kids().trim()}\n\n`;
@@ -186,11 +187,7 @@ export function renderFullArticleMarkdown(
 ): string {
   const pub = meta.publishedAt ? new Date(meta.publishedAt).toISOString().slice(0, 10) : '';
   const created = new Date().toISOString().slice(0, 10);
-  const tags = [
-    'readest',
-    'rss',
-    ...(meta.categories ?? []).map((c) => c.replace(/\s+/g, '-')),
-  ];
+  const tags = ['readest', 'rss', ...(meta.categories ?? []).map((c) => c.replace(/\s+/g, '-'))];
   const frontmatter = [
     '---',
     `title: "${yamlEscape(meta.title)}"`,

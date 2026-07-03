@@ -1564,9 +1564,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 !isProgressBarDragging && 'duration-100',
               )}
               style={{
-                ...(isRTLDoc
-                  ? { right: `${state.progress}%` }
-                  : { left: `${state.progress}%` }),
+                ...(isRTLDoc ? { right: `${state.progress}%` } : { left: `${state.progress}%` }),
                 backgroundColor: accentColor,
               }}
             />

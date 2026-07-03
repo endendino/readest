@@ -36,7 +36,9 @@ const escapeHtml = (s: string) =>
  */
 function buildMasthead(article: FreshRSSArticle): string {
   const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString() : '';
-  const logo = article.feedIconUrl ? `<img src="${escapeHtml(article.feedIconUrl)}" alt="" /> ` : '';
+  const logo = article.feedIconUrl
+    ? `<img src="${escapeHtml(article.feedIconUrl)}" alt="" /> `
+    : '';
   const source = article.feedTitle ? `<strong>${escapeHtml(article.feedTitle)}</strong>` : '';
   const sourceLine = logo || source ? `<p>${logo}${source}</p>` : '';
   const titleLine = `<h1>${escapeHtml(article.title || '(untitled)')}</h1>`;

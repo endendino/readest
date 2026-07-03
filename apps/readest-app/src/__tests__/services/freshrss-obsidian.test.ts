@@ -16,6 +16,8 @@ describe('renderArticleMarkdown', () => {
   });
 
   it('returns empty string when there are no highlights', () => {
-    expect(renderArticleMarkdown({ title: 't', url: 'u', feedTitle: 'f', publishedAt: 0 }, [])).toBe('');
+    expect(
+      renderArticleMarkdown({ title: 't', url: 'u', feedTitle: 'f', publishedAt: 0 }, []),
+    ).toBe('');
   });
 });

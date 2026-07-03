@@ -47,7 +47,14 @@ describe('greader parsers', () => {
       ],
     });
     const { feeds, folders } = mergeUnreadCounts(
-      [{ id: 'feed/https://a.com/rss', title: 'Paper A', folderId: 'user/-/label/News', unreadCount: 0 }],
+      [
+        {
+          id: 'feed/https://a.com/rss',
+          title: 'Paper A',
+          folderId: 'user/-/label/News',
+          unreadCount: 0,
+        },
+      ],
       [{ id: 'user/-/label/News', label: 'News', unreadCount: 0 }],
       counts,
     );
