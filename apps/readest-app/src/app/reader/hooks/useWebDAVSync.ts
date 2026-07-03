@@ -18,6 +18,8 @@ import { WebDAVRequestError } from '@/services/webdav/WebDAVClient';
 import { isTauriAppPlatform } from '@/services/environment';
 import { tauriUpload } from '@/utils/transfer';
 import { getCoverFilename, getLocalBookFilename } from '@/utils/book';
+import { CFI } from '@/libs/document';
+import { isMalformedLocationCfi } from '@/utils/cfi';
 import { removeBookNoteOverlays } from '../utils/annotatorUtil';
 import { useWindowActiveChanged } from './useWindowActiveChanged';
 
@@ -413,6 +415,33 @@ export const useWebDAVSync = (bookKey: string) => {
       }
 
       setConfig(bookKey, toApply);
+
+      // Live-apply a newer remote reading position to the open reader —
+      // mirrors useProgressSync.applyRemoteProgress so WebDAV and cloud sync
+      // feel identical. Without this, a pulled position only updated the
+      // config store and the open book never moved, so switching devices
+      // looked like "sync isn't working" until the next reopen. Only ever
+      // jumps FORWARD (remote ahead of local) and never while previewing a
+      // deep-link target.
+      if (wantProgress) {
+        const localCFI = config.location;
+        const remoteCFI = toApply.location;
+        if (localCFI && remoteCFI && remoteCFI !== localCFI && !isMalformedLocationCfi(remoteCFI)) {
+          let remoteAhead = false;
+          try {
+            remoteAhead = CFI.compare(localCFI, remoteCFI) < 0;
+          } catch {
+            remoteAhead = false;
+          }
+          const view = getView(bookKey);
+          const isPreview = useReaderStore.getState().getViewState(bookKey)?.previewMode;
+          if (remoteAhead && view && !isPreview) {
+            view.goTo(remoteCFI);
+            eventDispatcher.dispatch('hint', { bookKey, message: _('Reading Progress Synced') });
+          }
+        }
+      }
+
       // Persist locally so a later session sees the merged state even if
       // the user closes the book without further interaction.
       const latest = getConfig(bookKey);
