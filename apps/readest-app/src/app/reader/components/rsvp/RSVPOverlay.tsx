@@ -588,6 +588,30 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   // spans: slicing by character index breaks letter shaping and reverses the
   // visual order. Render them whole instead, like CJK Highlight Word (#4630).
   const isRTLWord = currentWord ? isRTLText(currentWord.text) : false;
+  // Overall reading direction of the book. Sampled once across ALL words (not
+  // the visible window) so it stays stable when the context scrolls past an
+  // embedded English quote or a run of numbers. Drives the context panel so a
+  // Hebrew/Arabic sentence reads right-to-left and right-aligned instead of the
+  // hardcoded left-aligned LTR it used to fall back to.
+  const isRTLDoc = useMemo(() => {
+    // Trust an explicit RTL book language first (covers docs that open on a
+    // number/quote and short sections with too few sampled letters).
+    if (lang && /^(he|iw|ar|fa|ur|yi|ps|sd|dv|ug|arc|syr|ckb)(-|_|$)/i.test(lang)) {
+      return true;
+    }
+    const words = state.words;
+    if (words.length === 0) return false;
+    const step = Math.max(1, Math.floor(words.length / 300));
+    let rtl = 0;
+    let letters = 0;
+    for (let i = 0; i < words.length; i += step) {
+      const t = words[i]?.text;
+      if (!t) continue;
+      if (/\p{L}/u.test(t)) letters++;
+      if (isRTLText(t)) rtl++;
+    }
+    return letters > 0 && rtl / letters > 0.5;
+  }, [state.words, lang]);
   const currentFontSize =
     FONT_SIZE_OPTIONS[fontSizeIndex] ?? FONT_SIZE_OPTIONS[DEFAULT_FONT_SIZE_INDEX]!;
   // Gap between the ORP glyph and the side halves. Widened slightly (#C14) so a
@@ -1421,7 +1445,11 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             <div
               ref={contextPanelRef}
               data-testid='rsvp-context-panel'
-              className='select-text text-left text-base leading-loose md:text-lg'
+              dir={isRTLDoc ? 'rtl' : 'ltr'}
+              className={clsx(
+                'select-text text-base leading-loose md:text-lg',
+                isRTLDoc ? 'text-right' : 'text-left',
+              )}
               style={{ fontFamily }}
               onClick={handleContextClick}
               onMouseUp={handleContextSelection}

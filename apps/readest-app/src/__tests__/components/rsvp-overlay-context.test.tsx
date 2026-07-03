@@ -401,6 +401,39 @@ describe('RSVPOverlay — RTL word display (#4630)', () => {
     expect(container.querySelector('.rsvp-word-orp')).toBeNull();
   });
 
+  test('right-aligns and RTL-flows the context panel for a Hebrew document', () => {
+    const state = buildState({
+      words: [
+        { text: 'שלום', orpIndex: 0, pauseMultiplier: 1 },
+        { text: 'עולם', orpIndex: 0, pauseMultiplier: 1 },
+        { text: 'כאן', orpIndex: 0, pauseMultiplier: 1 },
+      ],
+      currentIndex: 1,
+    });
+    const { container } = renderOverlay(state);
+
+    const panel = container.querySelector('[data-testid="rsvp-context-panel"]') as HTMLElement;
+    expect(panel).not.toBeNull();
+    expect(panel.getAttribute('dir')).toBe('rtl');
+    expect(panel.className).toContain('text-right');
+    expect(panel.className).not.toContain('text-left');
+  });
+
+  test('keeps the context panel LTR/left-aligned for a Latin document', () => {
+    const state = buildState({
+      words: [
+        { text: 'hello', orpIndex: 1, pauseMultiplier: 1 },
+        { text: 'world', orpIndex: 1, pauseMultiplier: 1 },
+      ],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+
+    const panel = container.querySelector('[data-testid="rsvp-context-panel"]') as HTMLElement;
+    expect(panel.getAttribute('dir')).toBe('ltr');
+    expect(panel.className).toContain('text-left');
+  });
+
   test('keeps the focus-letter split for Latin words (no spurious dir)', () => {
     const state = buildState({
       words: [{ text: 'hello', orpIndex: 1, pauseMultiplier: 1 }],
