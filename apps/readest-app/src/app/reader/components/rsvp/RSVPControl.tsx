@@ -16,6 +16,7 @@ import {
 import { eventDispatcher } from '@/utils/event';
 import { buildRsvpTtsSpeakDetail } from './rsvpTts';
 import { getBaseFontFamily } from '@/utils/style';
+import { getDirFromLanguage } from '@/utils/rtl';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { BookNote, PageInfo } from '@/types/book';
@@ -1099,6 +1100,9 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
 
   // Book language drives dictionary provider selection for context lookups (#4475).
   const dictionaryLang = bookData?.bookDoc?.metadata?.language as string | undefined;
+  // Authoritative reading direction: the reader's per-book `rtl` view setting,
+  // falling back to the book language when view settings aren't resolved yet.
+  const bookRtl = viewSettings?.rtl ?? getDirFromLanguage(dictionaryLang ?? '') === 'rtl';
   const handleManageDictionary = useCallback(() => {
     // Open dictionary management OVER the RSVP overlay (RSVP stays open). The
     // settings dialog is raised above the overlay's z-[10000] (see SettingsDialog),
@@ -1178,6 +1182,7 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
             currentChapterHref={currentChapterHref}
             fontFamily={fontFamily}
             lang={dictionaryLang}
+            rtl={bookRtl}
             ttsSyncStatus={ttsSyncStatus}
             estimated={ttsEstimated}
             ttsActive={ttsActive}

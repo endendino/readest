@@ -113,6 +113,13 @@ interface RSVPOverlayProps {
   fontFamily?: string;
   /** Book language, used to pick dictionary providers for context lookups. */
   lang?: string;
+  /**
+   * Whether the book reads right-to-left (from the reader's view settings).
+   * Drives RTL mirroring of the whole overlay — header, controls, and the
+   * right-aligned RTL context. When omitted, direction is inferred from `lang`
+   * or sampled from the text.
+   */
+  rtl?: boolean;
   /** Derived TTS-sync status driving the "following audio" indicator (#3235). */
   ttsSyncStatus?: TtsSyncStatus;
   /** True when following is paced by the estimator (non-Edge sentence sync). */
@@ -145,6 +152,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   currentChapterHref,
   fontFamily,
   lang,
+  rtl,
   ttsSyncStatus = 'idle',
   estimated = false,
   ttsActive = false,
@@ -588,30 +596,29 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   // spans: slicing by character index breaks letter shaping and reverses the
   // visual order. Render them whole instead, like CJK Highlight Word (#4630).
   const isRTLWord = currentWord ? isRTLText(currentWord.text) : false;
-  // Overall reading direction of the book. Sampled once across ALL words (not
-  // the visible window) so it stays stable when the context scrolls past an
-  // embedded English quote or a run of numbers. Drives the context panel so a
-  // Hebrew/Arabic sentence reads right-to-left and right-aligned instead of the
-  // hardcoded left-aligned LTR it used to fall back to.
+  // Overall reading direction of the book, driving RTL mirroring of the whole
+  // overlay. Prefer the reader's authoritative `rtl` view setting; otherwise
+  // trust an explicit RTL book language; otherwise sample across ALL words (not
+  // the visible window, so it stays stable when the context scrolls past an
+  // embedded English quote or a run of numbers).
   const isRTLDoc = useMemo(() => {
-    // Trust an explicit RTL book language first (covers docs that open on a
-    // number/quote and short sections with too few sampled letters).
+    if (rtl !== undefined) return rtl;
     if (lang && /^(he|iw|ar|fa|ur|yi|ps|sd|dv|ug|arc|syr|ckb)(-|_|$)/i.test(lang)) {
       return true;
     }
     const words = state.words;
     if (words.length === 0) return false;
     const step = Math.max(1, Math.floor(words.length / 300));
-    let rtl = 0;
+    let rtlCount = 0;
     let letters = 0;
     for (let i = 0; i < words.length; i += step) {
       const t = words[i]?.text;
       if (!t) continue;
       if (/\p{L}/u.test(t)) letters++;
-      if (isRTLText(t)) rtl++;
+      if (isRTLText(t)) rtlCount++;
     }
-    return letters > 0 && rtl / letters > 0.5;
-  }, [state.words, lang]);
+    return letters > 0 && rtlCount / letters > 0.5;
+  }, [rtl, state.words, lang]);
   const currentFontSize =
     FONT_SIZE_OPTIONS[fontSizeIndex] ?? FONT_SIZE_OPTIONS[DEFAULT_FONT_SIZE_INDEX]!;
   // Gap between the ORP glyph and the side halves. Widened slightly (#C14) so a
@@ -854,11 +861,14 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       // Symmetric mirror gestures (#C6): the left and right quarters both skip
       // the same unit (15 words) in opposite directions, so users build one
       // mental model. (Paragraph-symmetry isn't possible — the controller has
-      // rewindParagraph but no forward-paragraph equivalent.)
+      // rewindParagraph but no forward-paragraph equivalent.) In RTL, reading
+      // flows right-to-left, so the far edges swap: tapping left goes forward.
       if (tapX < screenWidth * 0.25) {
-        controller.skipBackward(15);
+        if (isRTLDoc) controller.skipForward(15);
+        else controller.skipBackward(15);
       } else if (tapX > screenWidth * 0.75) {
-        controller.skipForward(15);
+        if (isRTLDoc) controller.skipBackward(15);
+        else controller.skipForward(15);
       } else {
         transportToggleRef.current();
       }
@@ -969,7 +979,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const getProgressBarPercentage = (clientX: number, target: HTMLElement): number => {
     const rect = target.getBoundingClientRect();
     const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
-    return (x / rect.width) * 100;
+    const ratio = rect.width > 0 ? x / rect.width : 0;
+    // In RTL the bar starts at the right edge, so a physical-left offset maps to
+    // the far (later) end of the chapter — invert the ratio.
+    return (isRTLDoc ? 1 - ratio : ratio) * 100;
   };
 
   const handleProgressBarPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1061,6 +1074,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       aria-modal='true'
       aria-label={_('Speed Reading')}
       tabIndex={-1}
+      // RTL books mirror the whole overlay. The layout is built on logical
+      // properties (ms-/me-, ps-/pe-, start-/end-, text-start), so flipping
+      // `dir` reflows the header, transport and dropdowns correctly.
+      dir={isRTLDoc ? 'rtl' : 'ltr'}
       className='fixed inset-0 z-[10000] flex select-none flex-col'
       style={{
         paddingTop: `${gridInsets.top}px`,
@@ -1103,7 +1120,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             className='flex w-full items-center gap-1.5 rounded-full border border-gray-500/20 bg-gray-500/10 px-3 py-1.5 text-sm transition-colors hover:bg-gray-500/20'
             onClick={() => setShowChapterDropdown(!showChapterDropdown)}
           >
-            <span className='min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left'>
+            <span className='min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-start'>
               {getCurrentChapterLabel()}
             </span>
             <svg
@@ -1129,7 +1146,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                     key={`${chapter.href}-${idx}`}
                     data-active={isChapterActive(chapter.href) ? 'true' : undefined}
                     className={clsx(
-                      'block w-full rounded-md border-none bg-transparent px-4 py-2.5 text-left text-sm transition-colors first:rounded-t-2xl last:rounded-b-2xl hover:bg-gray-500/15',
+                      'block w-full rounded-md border-none bg-transparent px-4 py-2.5 text-start text-sm transition-colors first:rounded-t-2xl last:rounded-b-2xl hover:bg-gray-500/15',
                       isChapterActive(chapter.href) &&
                         'bg-[color-mix(in_srgb,var(--rsvp-accent)_15%,transparent)] font-semibold',
                     )}
@@ -1428,7 +1445,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           >
             <path d='M4 6h16M4 12h16M4 18h10' />
           </svg>
-          <span className='flex-1 text-left'>{_('Context')}</span>
+          <span className='flex-1 text-start'>{_('Context')}</span>
           <IoChevronDown
             className={clsx(
               'h-3.5 w-3.5 transition-transform duration-200',
@@ -1518,22 +1535,40 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               if (e.key === 'ArrowLeft') {
                 e.preventDefault();
                 e.stopPropagation();
-                controller.skipBackward();
+                // In RTL, leftward is forward through the chapter.
+                if (isRTLDoc) controller.skipForward();
+                else controller.skipBackward();
               } else if (e.key === 'ArrowRight') {
                 e.preventDefault();
                 e.stopPropagation();
-                controller.skipForward();
+                if (isRTLDoc) controller.skipBackward();
+                else controller.skipForward();
               }
             }}
             title={_('Drag to seek')}
           >
             <div
-              className={`absolute left-0 top-0 h-full rounded ${isProgressBarDragging ? '' : 'transition-[width] duration-100'}`}
+              // `start-0` anchors the fill to the inline-start edge (right in
+              // RTL), so it grows from the chapter's beginning in either dir.
+              className={`absolute start-0 top-0 h-full rounded ${isProgressBarDragging ? '' : 'transition-[width] duration-100'}`}
               style={{ width: `${state.progress}%`, backgroundColor: accentColor }}
             />
             <div
-              className={`absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full shadow ${isProgressBarDragging ? '' : 'transition-[left] duration-100'}`}
-              style={{ left: `${state.progress}%`, backgroundColor: accentColor }}
+              // Transforms are physical (not flipped by `dir`), so the handle
+              // anchors to the inline-start edge and centres itself with the
+              // matching-sign translate for the active direction.
+              className={clsx(
+                'absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full shadow',
+                isRTLDoc ? 'translate-x-1/2' : '-translate-x-1/2',
+                !isProgressBarDragging && (isRTLDoc ? 'transition-[right]' : 'transition-[left]'),
+                !isProgressBarDragging && 'duration-100',
+              )}
+              style={{
+                ...(isRTLDoc
+                  ? { right: `${state.progress}%` }
+                  : { left: `${state.progress}%` }),
+                backgroundColor: accentColor,
+              }}
             />
           </div>
         </div>
@@ -1636,7 +1671,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           <div className='mt-3 flex flex-wrap items-center justify-evenly gap-x-8 gap-y-4 text-xs md:justify-center'>
             {/* Punctuation pause */}
             <label className='flex cursor-pointer items-center gap-1.5 font-medium opacity-80'>
-              <span className='mr-0.5 font-medium opacity-50'>{_('Punctuation Delay')}</span>
+              <span className='me-0.5 font-medium opacity-50'>{_('Punctuation Delay')}</span>
               <select
                 className='cursor-pointer rounded border border-gray-500/30 bg-gray-500/20 px-1.5 py-1 text-xs font-medium transition-colors hover:border-gray-500/40 hover:bg-gray-500/30'
                 style={{ color: 'inherit' }}
@@ -1653,7 +1688,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
 
             {/* Pre-start countdown delay */}
             <label className='flex cursor-pointer items-center gap-1.5 font-medium opacity-80'>
-              <span className='mr-0.5 font-medium opacity-50'>{_('Start Delay')}</span>
+              <span className='me-0.5 font-medium opacity-50'>{_('Start Delay')}</span>
               <select
                 data-testid='rsvp-start-delay-select'
                 className='cursor-pointer rounded border border-gray-500/30 bg-gray-500/20 px-1.5 py-1 text-xs font-medium transition-colors hover:border-gray-500/40 hover:bg-gray-500/30'

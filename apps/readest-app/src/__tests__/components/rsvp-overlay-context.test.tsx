@@ -434,6 +434,31 @@ describe('RSVPOverlay — RTL word display (#4630)', () => {
     expect(panel.className).toContain('text-left');
   });
 
+  test('mirrors the whole overlay (root dir=rtl) for a Hebrew document', () => {
+    const state = buildState({
+      words: [
+        { text: 'שלום', orpIndex: 0, pauseMultiplier: 1 },
+        { text: 'עולם', orpIndex: 0, pauseMultiplier: 1 },
+      ],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    expect(root.getAttribute('dir')).toBe('rtl');
+  });
+
+  test('keeps the overlay LTR for a Latin document', () => {
+    const state = buildState({
+      words: [{ text: 'hello', orpIndex: 1, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    expect(root.getAttribute('dir')).toBe('ltr');
+  });
+
   test('keeps the focus-letter split for Latin words (no spurious dir)', () => {
     const state = buildState({
       words: [{ text: 'hello', orpIndex: 1, pauseMultiplier: 1 }],
@@ -443,6 +468,69 @@ describe('RSVPOverlay — RTL word display (#4630)', () => {
 
     expect(container.querySelector('.rsvp-word-orp')).not.toBeNull();
     expect(container.querySelector('.rsvp-word-whole')).toBeNull();
+  });
+});
+
+describe('RSVPOverlay — RTL seek gestures mirror direction', () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  const hebrewWords = () =>
+    Array.from({ length: 50 }, (_, i) => ({ text: `מ${i}`, orpIndex: 0, pauseMultiplier: 1 }));
+  const latinWords = () =>
+    Array.from({ length: 50 }, (_, i) => ({ text: `w${i}`, orpIndex: 0, pauseMultiplier: 1 }));
+
+  test('RTL: ArrowLeft on the progress slider seeks forward, ArrowRight seeks back', () => {
+    const { container, controller } = renderOverlay(buildState({ words: hebrewWords() }));
+    const slider = container.querySelector('[role="slider"]') as HTMLElement;
+    // The overlay's capture-phase handler only defers arrows while the slider is
+    // focused (#D1); focus it so the slider's own onKeyDown runs.
+    slider.focus();
+
+    fireEvent.keyDown(slider, { key: 'ArrowLeft' });
+    expect(controller.skipForward).toHaveBeenCalledTimes(1);
+    expect(controller.skipBackward).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(controller.skipBackward).toHaveBeenCalledTimes(1);
+  });
+
+  test('LTR: ArrowLeft seeks back, ArrowRight seeks forward (unchanged)', () => {
+    const { container, controller } = renderOverlay(buildState({ words: latinWords() }));
+    const slider = container.querySelector('[role="slider"]') as HTMLElement;
+    slider.focus();
+
+    fireEvent.keyDown(slider, { key: 'ArrowLeft' });
+    expect(controller.skipBackward).toHaveBeenCalledTimes(1);
+    expect(controller.skipForward).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(controller.skipForward).toHaveBeenCalledTimes(1);
+  });
+
+  test('RTL: tapping the left quarter skips forward (edges swap)', () => {
+    const { container, controller } = renderOverlay(buildState({ words: hebrewWords() }));
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+
+    // jsdom innerWidth is 1024; clientX 100 is well inside the left quarter.
+    fireEvent.touchStart(root, { touches: [{ clientX: 100, clientY: 300 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 100, clientY: 300 }] });
+
+    expect(controller.skipForward).toHaveBeenCalledWith(15);
+    expect(controller.skipBackward).not.toHaveBeenCalled();
+  });
+
+  test('LTR: tapping the left quarter skips backward (unchanged)', () => {
+    const { container, controller } = renderOverlay(buildState({ words: latinWords() }));
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+
+    fireEvent.touchStart(root, { touches: [{ clientX: 100, clientY: 300 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 100, clientY: 300 }] });
+
+    expect(controller.skipBackward).toHaveBeenCalledWith(15);
+    expect(controller.skipForward).not.toHaveBeenCalled();
   });
 });
 
