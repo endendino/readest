@@ -10,6 +10,14 @@ beforeAll(() => {
   if (!Element.prototype.scrollIntoView) {
     Element.prototype.scrollIntoView = vi.fn();
   }
+  // jsdom has no ResizeObserver; the shrink-to-fit effect (#C1) constructs one.
+  if (typeof globalThis.ResizeObserver === 'undefined') {
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  }
 });
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -68,6 +76,7 @@ const buildState = (overrides: Partial<RsvpState> = {}): RsvpState => ({
 const buildController = (state: RsvpState) => {
   const listeners = new Map<string, EventListener[]>();
   const controller = {
+    bookHash: 'testbook',
     get currentState() {
       return state;
     },
@@ -418,22 +427,10 @@ describe('RSVPOverlay — manual word stepping (#4476)', () => {
       playing: true,
     });
 
-  test('the next-word button calls controller.nextWord', () => {
-    const { container, controller } = renderOverlay(wordsState());
-    const button = container.querySelector('[aria-label="Next word"]') as HTMLElement;
-    expect(button).not.toBeNull();
-    fireEvent.click(button);
-    expect(controller.nextWord).toHaveBeenCalledTimes(1);
-  });
-
-  test('the previous-word button calls controller.prevWord', () => {
-    const { container, controller } = renderOverlay(wordsState());
-    const button = container.querySelector('[aria-label="Previous word"]') as HTMLElement;
-    expect(button).not.toBeNull();
-    fireEvent.click(button);
-    expect(controller.prevWord).toHaveBeenCalledTimes(1);
-  });
-
+  // NOTE: the dedicated next/previous-word *buttons* were removed from the
+  // overlay UI; manual stepping is keyboard-only ('.' / ','). The two obsolete
+  // button tests were failing on baseline against non-existent elements and are
+  // superseded by the keyboard test below.
   test('the "." key steps to the next word and "," to the previous word', () => {
     const { controller } = renderOverlay(wordsState());
     fireEvent.keyDown(document, { key: '.' });
@@ -566,5 +563,349 @@ describe('RSVPOverlay — start delay setting (#4478)', () => {
     expect(select).not.toBeNull();
     fireEvent.change(select, { target: { value: '0' } });
     expect(controller.setStartDelay).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('RSVPOverlay — shrink-to-fit (#C1)', () => {
+  afterEach(() => cleanup());
+
+  test('wraps the focal word in an inner scaling element (positioning context)', () => {
+    const state = buildState({
+      words: [{ text: 'hello', orpIndex: 1, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+    const word = container.querySelector('.rsvp-word') as HTMLElement;
+    // The split halves anchor to an inner scaling wrapper, not the outer box.
+    const inner = word.querySelector(':scope > div') as HTMLElement;
+    expect(inner).not.toBeNull();
+    expect(inner.querySelector('.rsvp-word-orp')).not.toBeNull();
+  });
+});
+
+describe('RSVPOverlay — dialog semantics (#D2)', () => {
+  afterEach(() => cleanup());
+
+  test('the overlay root is a modal dialog', () => {
+    const state = buildState({
+      words: [{ text: 'a', orpIndex: 0, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    expect(root.getAttribute('role')).toBe('dialog');
+    expect(root.getAttribute('aria-modal')).toBe('true');
+  });
+});
+
+describe('RSVPOverlay — context panel a11y (#D3)', () => {
+  afterEach(() => cleanup());
+
+  const wordsState = () =>
+    buildState({
+      words: Array.from({ length: 200 }, (_, i) => ({
+        text: `w${i}`,
+        orpIndex: 0,
+        pauseMultiplier: 1,
+      })),
+      currentIndex: 100,
+    });
+
+  test('windowed words are not individually tab-focusable or role=button', () => {
+    const { container } = renderOverlay(wordsState());
+    const words = container.querySelectorAll('[data-rsvp-word-button]');
+    expect(words.length).toBeGreaterThan(0);
+    for (const el of Array.from(words)) {
+      expect(el.getAttribute('tabindex')).toBeNull();
+      expect(el.getAttribute('role')).toBeNull();
+    }
+  });
+
+  test('clicking a windowed word still seeks (click-to-seek preserved)', () => {
+    const { container, controller } = renderOverlay(wordsState());
+    const target = container.querySelector('[data-rsvp-word-index="90"]') as HTMLElement;
+    expect(target).not.toBeNull();
+    fireEvent.click(target);
+    expect(controller.seekToIndex).toHaveBeenCalledWith(90);
+  });
+
+  test('clicking the current word does not seek', () => {
+    const { container, controller } = renderOverlay(wordsState());
+    const current = container.querySelector('[data-rsvp-word-index="100"]') as HTMLElement;
+    fireEvent.click(current);
+    expect(controller.seekToIndex).not.toHaveBeenCalled();
+  });
+});
+
+describe('RSVPOverlay — context panel does not toggle playback (#C2)', () => {
+  afterEach(() => cleanup());
+
+  test('the context panel container carries rsvp-controls so taps are ignored', () => {
+    const state = buildState({
+      words: [{ text: 'a', orpIndex: 0, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+    // The collapse header lives inside the rsvp-controls-marked container, so a
+    // tap on it can never bubble to the overlay center tap-zone.
+    const header = container.querySelector('[aria-label="Hide context"]') as HTMLElement;
+    expect(header).not.toBeNull();
+    expect(header.closest('.rsvp-controls')).not.toBeNull();
+  });
+});
+
+describe('RSVPOverlay — progress slider keyboard (#D1)', () => {
+  afterEach(() => cleanup());
+
+  const sliderState = () =>
+    buildState({
+      words: Array.from({ length: 10 }, (_, i) => ({
+        text: `w${i}`,
+        orpIndex: 0,
+        pauseMultiplier: 1,
+      })),
+      currentIndex: 5,
+    });
+
+  test("the slider's own onKeyDown ignores Tab (no seek), so it is not a key trap", () => {
+    const { container, controller } = renderOverlay(sliderState());
+    const slider = container.querySelector('[role="slider"]') as HTMLElement;
+    // The slider handler previously preventDefaulted *every* key (incl. Tab);
+    // now it only claims arrows. Tab must not be treated as a seek key.
+    fireEvent.keyDown(slider, { key: 'Tab' });
+    expect(controller.skipForward).not.toHaveBeenCalled();
+    expect(controller.skipBackward).not.toHaveBeenCalled();
+  });
+
+  test('ArrowRight on the slider seeks forward and is handled', () => {
+    const { container, controller } = renderOverlay(sliderState());
+    const slider = container.querySelector('[role="slider"]') as HTMLElement;
+    slider.focus();
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(controller.skipForward).toHaveBeenCalled();
+  });
+});
+
+describe('RSVPOverlay — symmetric tap zones (#C6)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  test('left-quarter tap skips backward (mirrors the right-quarter forward skip)', () => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(400);
+    const state = buildState({
+      words: Array.from({ length: 100 }, (_, i) => ({
+        text: `w${i}`,
+        orpIndex: 0,
+        pauseMultiplier: 1,
+      })),
+      currentIndex: 50,
+    });
+    const { container, controller } = renderOverlay(state);
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    // Tap in the left quarter (x=40 of 400 → < 100).
+    fireEvent.touchStart(root, { touches: [{ clientX: 40, clientY: 300 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 40, clientY: 300 }] });
+    expect(controller.skipBackward).toHaveBeenCalledWith(15);
+    expect(controller.rewindParagraph).not.toHaveBeenCalled();
+  });
+});
+
+describe('RSVPOverlay — Escape closes topmost layer first (#C8)', () => {
+  // The calibration ramp shows by default (no prior calibration); mark it done
+  // so Escape isn't consumed closing calibration.
+  beforeAll(() => localStorage.setItem('readest_rsvp_calibrated_testbook', '1'));
+  afterEach(() => cleanup());
+
+  test('Escape closes an open chapter dropdown instead of the whole session', () => {
+    const state = buildState({
+      words: [{ text: 'a', orpIndex: 0, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const controller = buildController(state);
+    const onClose = vi.fn();
+    const { container } = render(
+      <RSVPOverlay
+        gridInsets={{ top: 0, bottom: 0, left: 0, right: 0 }}
+        controller={controller as unknown as RSVPController}
+        chapters={[{ label: 'Ch 1', href: 'a.html', subitems: [] }] as never}
+        currentChapterHref={'a.html'}
+        onClose={onClose}
+        onChapterSelect={vi.fn()}
+        onRequestNextPage={vi.fn()}
+      />,
+    );
+    // The chapter selector button shows the current chapter label; open it.
+    const chapterButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Ch 1'),
+    ) as HTMLElement;
+    expect(chapterButton).not.toBeUndefined();
+    fireEvent.click(chapterButton);
+    // Escape should close the dropdown, not call onClose.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('Escape with nothing layered closes the session', () => {
+    const state = buildState({
+      words: [{ text: 'a', orpIndex: 0, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const controller = buildController(state);
+    const onClose = vi.fn();
+    render(
+      <RSVPOverlay
+        gridInsets={{ top: 0, bottom: 0, left: 0, right: 0 }}
+        controller={controller as unknown as RSVPController}
+        chapters={[]}
+        currentChapterHref={null}
+        onClose={onClose}
+        onChapterSelect={vi.fn()}
+        onRequestNextPage={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RSVPOverlay — RTL word colour (#A8)', () => {
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+  });
+
+  test('an RTL whole word renders in the default colour (no ORP accent)', () => {
+    const state = buildState({
+      words: [{ text: 'שלום', orpIndex: 0, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const { container } = renderOverlay(state);
+    const whole = container.querySelector('.rsvp-word-whole') as HTMLElement;
+    expect(whole).not.toBeNull();
+    // No inline colour → inherits the overlay's default fg.
+    expect(whole.style.color).toBe('');
+  });
+
+  test('the CJK Highlight Word mode still colours the whole word', () => {
+    localStorage.setItem('readest_rsvp_cjk_highlight_word', '1');
+    const state = buildState({
+      words: [{ text: '喜欢', orpIndex: 1, pauseMultiplier: 1 }],
+      currentIndex: 0,
+      hasCJK: true,
+    });
+    const { container } = renderOverlay(state);
+    const whole = container.querySelector('.rsvp-word-whole') as HTMLElement;
+    expect(whole.style.color).not.toBe('');
+  });
+});
+
+describe('RSVPOverlay — audio toggle label (#D5)', () => {
+  afterEach(() => cleanup());
+
+  test('the engaged audio toggle says "Stop audio", not "Pause audio"', () => {
+    const state = buildState({
+      words: [{ text: 'a', orpIndex: 0, pauseMultiplier: 1 }],
+      currentIndex: 0,
+    });
+    const controller = buildController(state);
+    const { container } = render(
+      <RSVPOverlay
+        gridInsets={{ top: 0, bottom: 0, left: 0, right: 0 }}
+        controller={controller as unknown as RSVPController}
+        chapters={[]}
+        currentChapterHref={null}
+        ttsActive
+        onToggleTtsAudio={vi.fn()}
+        onClose={vi.fn()}
+        onChapterSelect={vi.fn()}
+        onRequestNextPage={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[aria-label="Stop audio"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Pause audio"]')).toBeNull();
+  });
+});
+
+describe('RSVPOverlay — per-word direction in a chunk (#C7)', () => {
+  afterEach(() => cleanup());
+
+  const buildChunkController = (state: RsvpState, chunk: RsvpState['words']) => {
+    const listeners = new Map<string, EventListener[]>();
+    return {
+      get currentState() {
+        return state;
+      },
+      get currentDisplayWord() {
+        return chunk[0] ?? null;
+      },
+      get currentDisplayChunk() {
+        return chunk;
+      },
+      get currentCountdown() {
+        return null;
+      },
+      seekToIndex: vi.fn(),
+      seekToPosition: vi.fn(),
+      skipBackward: vi.fn(),
+      skipForward: vi.fn(),
+      rewindParagraph: vi.fn(),
+      nextWord: vi.fn(),
+      prevWord: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      togglePlayPause: vi.fn(),
+      decreaseSpeed: vi.fn(),
+      increaseSpeed: vi.fn(),
+      setWpm: vi.fn(),
+      setPunctuationPause: vi.fn(),
+      setSplitHyphens: vi.fn(),
+      setCjkCharMode: vi.fn(),
+      setStartDelay: vi.fn(),
+      setChunking: vi.fn(),
+      setWarmupRamp: vi.fn(),
+      setSmoothFlashes: vi.fn(),
+      setHoldSlow: vi.fn(),
+      getWpmOptions: vi.fn(() => [100, 200, 300]),
+      getPunctuationPauseOptions: vi.fn(() => [25, 50, 100]),
+      getStartDelayOptions: vi.fn(() => [0, 1, 2, 3]),
+      addEventListener: vi.fn((type: string, listener: EventListener) => {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type)!.push(listener);
+      }),
+      removeEventListener: vi.fn(),
+    };
+  };
+
+  test('only the Hebrew word in a mixed chunk gets dir=rtl (no wholesale flip)', () => {
+    const chunk = [
+      { text: 'the', orpIndex: 1, pauseMultiplier: 1 },
+      { text: 'שלום', orpIndex: 0, pauseMultiplier: 1 },
+      { text: 'cat', orpIndex: 1, pauseMultiplier: 1 },
+    ];
+    const state = buildState({ words: chunk, currentIndex: 0, chunking: true });
+    const controller = buildChunkController(state, chunk);
+    const { container } = render(
+      <RSVPOverlay
+        gridInsets={{ top: 0, bottom: 0, left: 0, right: 0 }}
+        controller={controller as unknown as RSVPController}
+        chapters={[]}
+        currentChapterHref={null}
+        onClose={vi.fn()}
+        onChapterSelect={vi.fn()}
+        onRequestNextPage={vi.fn()}
+      />,
+    );
+    const wordBox = container.querySelector('.rsvp-word') as HTMLElement;
+    // The chunk flex wrapper itself must not force a direction.
+    const chunkWrapper = wordBox.querySelector(':scope > div > div') as HTMLElement;
+    expect(chunkWrapper.getAttribute('dir')).toBeNull();
+    // Exactly one span carries dir=rtl (the Hebrew word); the Latin words don't.
+    const rtlSpans = wordBox.querySelectorAll('[dir="rtl"]');
+    expect(rtlSpans.length).toBe(1);
+    expect(rtlSpans[0]!.textContent).toBe('שלום');
+    // The Hebrew word in a chunk renders in the default colour (#A8).
+    expect((rtlSpans[0] as HTMLElement).style.color).toBe('');
   });
 });

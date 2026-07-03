@@ -5,7 +5,15 @@ import { FoliateView } from '@/types/view';
 const POSITION_KEY = 'readest_rsvp_pos_test';
 
 function makeTextNode(text: string): Text {
-  return { nodeType: Node.TEXT_NODE, textContent: text } as unknown as Text;
+  // nextSibling/firstChild are read by the extractor's firstChild/nextSibling
+  // walk (a perf change from the old Array.from(childNodes)); model them so the
+  // mock reflects a real DOM node.
+  return {
+    nodeType: Node.TEXT_NODE,
+    textContent: text,
+    firstChild: null,
+    nextSibling: null,
+  } as unknown as Text;
 }
 
 function makeDoc(text: string): Document {
@@ -14,6 +22,8 @@ function makeDoc(text: string): Document {
     nodeType: Node.ELEMENT_NODE,
     tagName: 'BODY',
     childNodes: [textNode],
+    firstChild: textNode,
+    nextSibling: null,
     ownerDocument: null as unknown as Document,
   } as unknown as HTMLElement;
 
@@ -59,6 +69,10 @@ describe('RSVPController', () => {
   // the CFI/position assertions are unaffected.
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+    // Settings/position persistence is real now (guarded localStorage helpers);
+    // clear between tests so a persisted toggle from one test (e.g. split
+    // hyphens, start delay) can't leak into the next controller's constructor.
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -161,8 +175,9 @@ describe('RSVPController', () => {
       // 6-letter word should have ORP at index 2 (same as Latin "Hellos")
       expect(words[0]!.orpIndex).toBe(2);
       expect(words[1]!.text).toBe('мир');
-      // 3-letter word: ORP at index 0
-      expect(words[1]!.orpIndex).toBe(0);
+      // 3-letter word: ORP at index 1, matching the Latin pivot bands
+      // (latinOrpIndex is script-agnostic: coreLen <= 5 pivots at 1).
+      expect(words[1]!.orpIndex).toBe(1);
     });
 
     test('places ORP based on letter count for accented Latin words', () => {
@@ -949,6 +964,247 @@ describe('RSVPController', () => {
 
       // Before the fix this was null (instanceof Range failed cross-realm).
       expect(resolved).toBe(crossRealmRange);
+    });
+  });
+
+  // Distinct 3-letter words (pure lowercase letters: dwell multiplier 1.0, no
+  // punctuation pauses, no duplicate-word ISI blanks) so flash durations are
+  // exactly 60000/wpm ms — plus the paragraph dwell on the very first word.
+  const plainWords = (count: number): string =>
+    Array.from(
+      { length: count },
+      (_, i) =>
+        `w${String.fromCharCode(97 + Math.floor(i / 26))}${String.fromCharCode(97 + (i % 26))}`,
+    ).join(' ');
+
+  describe('paragraph-start dwell (review A3)', () => {
+    test('the first word of a paragraph is held longer than a mid-paragraph word', () => {
+      const view = createMockView(0, [makeDoc('one two three')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(0);
+      controller.setWpm(300); // 200ms base slot
+      controller.start();
+
+      // Word 0 is a paragraph start: 200ms slot + 2×100ms paragraph dwell.
+      expect(controller.currentState.currentIndex).toBe(0);
+      vi.advanceTimersByTime(250); // past a plain slot…
+      expect(controller.currentState.currentIndex).toBe(0); // …but still dwelling
+      vi.advanceTimersByTime(150); // 400ms total
+      expect(controller.currentState.currentIndex).toBe(1);
+
+      // Word 1 ("two") is mid-paragraph: a plain 200ms slot.
+      vi.advanceTimersByTime(200);
+      expect(controller.currentState.currentIndex).toBe(2);
+    });
+  });
+
+  describe('warm-up ramp progresses per FLASH, not per word index (review A4)', () => {
+    test('with chunking on, the second flash still runs near ramp-start speed', () => {
+      const view = createMockView(0, [makeDoc(plainWords(10))]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(0);
+      controller.setWpm(300);
+      controller.setChunking(true);
+      controller.setWarmupRamp(true);
+      controller.start();
+
+      // Chunks pack two 3-char words (char budget 9). Flash 0 runs at the
+      // ramp-start 150wpm: 2×400ms + the 200ms paragraph dwell = 1000ms.
+      vi.advanceTimersByTime(1000);
+      expect(controller.currentState.currentIndex).toBe(2);
+
+      // Flash 1 must use ramp progress 1/8 (169wpm → ~710ms for the chunk).
+      // The old index-based arithmetic saw TWO words into the ramp (188wpm →
+      // ~638ms) and would already have advanced by 650ms.
+      vi.advanceTimersByTime(650);
+      expect(controller.currentState.currentIndex).toBe(2);
+      vi.advanceTimersByTime(100);
+      expect(controller.currentState.currentIndex).toBe(4);
+    });
+  });
+
+  describe('warm-up ramp re-anchors on user jumps (review A5)', () => {
+    test('a seek right after start restarts the ramp from the new position', () => {
+      const view = createMockView(0, [makeDoc(plainWords(30))]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(0);
+      controller.setWpm(300);
+      controller.setWarmupRamp(true);
+      controller.start(); // in-flight flash 0: 400ms ramp-start slot + 200ms dwell
+
+      controller.seekToIndex(15); // must re-anchor: flashes-since-anchor → 0
+      vi.advanceTimersByTime(600); // flash 0 completes; next flash armed at index 15
+      expect(controller.currentState.currentIndex).toBe(16);
+
+      // The next flash must run at ramp progress 1/8 (169wpm ≈ 355ms) — NOT
+      // full speed (200ms), which the stale-anchor arithmetic (16 words "into"
+      // an 8-word ramp) produced before the fix.
+      vi.advanceTimersByTime(300);
+      expect(controller.currentState.currentIndex).toBe(16);
+      vi.advanceTimersByTime(100);
+      expect(controller.currentState.currentIndex).toBe(17);
+    });
+
+    test('a backward skip does not pin the reader at ramp-start half speed', () => {
+      const view = createMockView(0, [makeDoc(plainWords(40))]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(0);
+      controller.setWpm(300);
+      controller.setWarmupRamp(true);
+      controller.start();
+
+      controller.skipForward(30); // anchor ahead…
+      controller.skipBackward(20); // …then jump back to index 10: the old code
+      // computed NEGATIVE ramp progress (clamped to 0) and stayed at 150wpm
+      // for every following word until the index re-passed the stale anchor.
+      vi.advanceTimersByTime(600); // in-flight flash 0 from start() completes
+      expect(controller.currentState.currentIndex).toBe(11);
+
+      // The ramp must complete and reach full speed: ~14 more words in the
+      // next 4s. Pinned at half speed it would cover only ~10.
+      vi.advanceTimersByTime(4000);
+      expect(controller.currentState.currentIndex).toBeGreaterThanOrEqual(24);
+    });
+  });
+
+  describe('start-from-selection normalization (review B1)', () => {
+    test('a Hebrew selection anchors at the selected word, not the section start', () => {
+      const view = createMockView(0, [makeDoc('שלום עולם טוב מאוד')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      // ASCII \w normalized every Hebrew word to '' and matched word 0.
+      controller.startFromSelection('עולם טוב');
+
+      expect(controller.currentState.words[1]!.text).toBe('עולם');
+      expect(controller.currentState.currentIndex).toBe(1);
+    });
+
+    test('a Latin selection still anchors at the selected word', () => {
+      const view = createMockView(0, [makeDoc('alpha beta gamma')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.startFromSelection('beta');
+
+      expect(controller.currentState.currentIndex).toBe(1);
+    });
+  });
+
+  describe('CJK pause multiplier vs attached punctuation (review B8)', () => {
+    test('trailing CJK punctuation does not count toward the length band', () => {
+      const view = createMockView(0, [makeDoc('是。')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setCjkCharMode(true);
+      controller.start();
+
+      const word = controller.currentState.words[0]!;
+      expect(word.text).toBe('是。');
+      // Single-character band (0.9), not the 2-char band (1.0) the raw
+      // length including 。 landed in.
+      expect(word.pauseMultiplier).toBe(0.9);
+    });
+  });
+
+  describe('ISI blank frames are not seek/save targets (review B9)', () => {
+    test('seekToIndex onto a synthetic blank lands on the next real word', () => {
+      const view = createMockView(0, [makeDoc('the the cat')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.start();
+
+      controller.seekToIndex(1); // index 1 is the inserted blank frame
+      expect(controller.currentState.currentIndex).toBe(2);
+      expect(controller.currentWord?.text).toBe('the');
+    });
+
+    test('position save while on a blank persists the nearest following real word', () => {
+      const view = createMockView(0, [makeDoc('the the cat')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(0);
+      controller.setWpm(300);
+      controller.start();
+
+      // One flash (200ms slot + 200ms paragraph dwell) lands on the blank.
+      vi.advanceTimersByTime(400);
+      expect(controller.currentState.words[controller.currentState.currentIndex]!.text).toBe(' ');
+
+      controller.stop();
+      // The blank has no node/CFI; before the fix nothing was saved at all.
+      expect(JSON.parse(localStorage.getItem(POSITION_KEY)!).wordText).toBe('the');
+    });
+  });
+
+  describe('resume countdown (review C3)', () => {
+    test('resume uses a brief 1s beat instead of replaying the full start delay', () => {
+      const view = createMockView(0, [makeDoc('one two three')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(3);
+      controller.start();
+      expect(controller.currentCountdown).toBe(3); // initial start honors the delay
+      vi.advanceTimersByTime(3000);
+      expect(controller.currentCountdown).toBeNull();
+
+      controller.pause();
+      controller.resume();
+      expect(controller.currentCountdown).toBe(1); // brief beat, not 3-2-1
+      vi.advanceTimersByTime(1000);
+      expect(controller.currentCountdown).toBeNull();
+      expect(controller.currentState.playing).toBe(true);
+    });
+
+    test('resume stays instant when the configured start delay is 0', () => {
+      const view = createMockView(0, [makeDoc('one two three')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(0);
+      controller.start();
+      controller.pause();
+      controller.resume();
+
+      expect(controller.currentCountdown).toBeNull();
+      expect(controller.currentState.playing).toBe(true);
+    });
+  });
+
+  describe('section boundary while playing (reviews C3, C9)', () => {
+    test('keeps playing (no pause-icon flicker) and skips the countdown', () => {
+      const doc1 = makeDoc('one two');
+      const doc2 = makeDoc('three four');
+      const view = createMockView(0, [doc1]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+      controller.setStartDelay(3);
+      controller.start();
+      vi.advanceTimersByTime(3000); // countdown done, now playing
+      expect(controller.currentState.playing).toBe(true);
+
+      // The next spine section arrives.
+      const renderer = view.renderer as unknown as {
+        primaryIndex: number;
+        getContents: ReturnType<typeof vi.fn>;
+      };
+      renderer.getContents.mockReturnValue([{ doc: doc2, index: 1 }]);
+      renderer.primaryIndex = 1;
+
+      const playingSeq: boolean[] = [];
+      controller.addEventListener('rsvp-state-change', (e) => {
+        playingSeq.push((e as CustomEvent).detail.playing);
+      });
+      controller.loadNextPageContent();
+
+      expect(controller.currentState.playing).toBe(true);
+      expect(controller.currentCountdown).toBeNull(); // no 3-2-1 replay mid-flow
+      expect(playingSeq).not.toContain(false); // playing never dipped to false
+      expect(controller.currentState.words.map((w) => w.text)).toEqual(['three', 'four']);
+      expect(controller.currentState.currentIndex).toBe(0);
+    });
+  });
+
+  describe('WPM cap (user maximum 600)', () => {
+    test('getWpmOptions tops out at 600 and setWpm clamps to it', () => {
+      const view = createMockView(0, [makeDoc('one two')]);
+      const controller = new RSVPController(view, 'test-book-abc123');
+
+      const options = controller.getWpmOptions();
+      expect(options[0]).toBe(100);
+      expect(options[options.length - 1]).toBe(600);
+
+      controller.setWpm(1000);
+      expect(controller.currentState.wpm).toBe(600);
     });
   });
 });

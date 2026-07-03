@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useTranslation } from '@/hooks/useTranslation';
-import { latinOrpIndex } from '@/services/rsvp/utils';
+import { latinOrpIndex, isRTLText } from '@/services/rsvp/utils';
 
 // Neutral sample text for the ramp; calibration is about finding a comfortable
-// RSVP pace, not about a specific passage.
+// RSVP pace, not about a specific passage. Bilingual (English + Hebrew) so the
+// calibrated speed isn't measured on a single script the reader may not
+// mostly read in (review A14). RTL words are rendered whole (see isRTLWord
+// below), matching how the real overlay handles Hebrew (#4630).
 const SAMPLE =
-  'The quick brown fox jumps over the lazy dog while the morning sun rises slowly above the quiet hills and a gentle breeze drifts across the open field carrying the soft distant sound of birds'.split(
+  'The quick brown fox jumps over the lazy dog while the morning sun rises slowly above the quiet hills הכלב הזקן ישן על השטיח ליד האח והחתול הקטן משחק בחוט צבעוני and a gentle breeze drifts across the open field carrying the soft distant sound of birds'.split(
     /\s+/,
   );
 
 const START_WPM = 200;
-const MAX_WPM = 700;
+const MAX_WPM = 600;
 const STEP_WPM = 20;
 const WORDS_PER_STEP = 4; // bump the speed every few words
 const COMFORT_FACTOR = 0.85; // settle a little below the "too fast" point
@@ -62,6 +65,7 @@ export default function RSVPCalibration({
     onComplete(Math.round(wpmRef.current * COMFORT_FACTOR));
   }, [onComplete]);
 
+  const isRTLWord = isRTLText(word);
   const orp = latinOrpIndex(word);
   const before = word.slice(0, orp);
   const pivot = word.charAt(orp);
@@ -80,16 +84,30 @@ export default function RSVPCalibration({
 
       <div
         className={clsx(
-          'flex min-h-16 items-center justify-center whitespace-nowrap text-4xl font-medium tracking-wide sm:text-5xl',
+          'relative flex min-h-16 w-full items-center justify-center whitespace-nowrap text-4xl font-medium tracking-wide sm:text-5xl',
           !fontFamily && 'font-mono',
         )}
         style={{ fontFamily: fontFamily || undefined }}
       >
-        {before}
-        <span className='font-bold' style={{ color: orpColor }}>
-          {pivot}
-        </span>
-        {after}
+        {isRTLWord ? (
+          // Whole-word mode for RTL, matching the real overlay: slicing by
+          // character index breaks Hebrew letter shaping/order (#4630).
+          <span className='font-bold' style={{ color: orpColor }} dir='rtl'>
+            {word}
+          </span>
+        ) : (
+          <>
+            <span className='absolute text-right opacity-60' style={{ right: 'calc(50% + 0.3em)' }}>
+              {before}
+            </span>
+            <span className='relative z-10 font-bold' style={{ color: orpColor }}>
+              {pivot}
+            </span>
+            <span className='absolute text-left opacity-60' style={{ left: 'calc(50% + 0.3em)' }}>
+              {after}
+            </span>
+          </>
+        )}
       </div>
 
       <div className='tabular-nums text-base font-semibold opacity-80'>

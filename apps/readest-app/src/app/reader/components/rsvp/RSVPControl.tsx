@@ -179,18 +179,43 @@ const expandRangeToSentence = (range: Range, doc: Document): Range => {
   const fullText = parentElement.textContent || '';
   const rangeText = range.toString();
 
-  // Find the position of our word in the parent text
-  const wordStart = fullText.indexOf(rangeText);
+  // Find the position of our word in the parent text. Walk the text nodes to
+  // compute the range's actual offset within fullText — a plain indexOf would
+  // anchor to the FIRST occurrence of a repeated word/substring in the
+  // paragraph, landing the sentence expansion on the wrong duplicate.
+  const findRangeStartOffset = (): number => {
+    if (range.startContainer.nodeType !== Node.TEXT_NODE) return -1;
+    const offsetWalker = doc.createTreeWalker(parentElement, NodeFilter.SHOW_TEXT, null);
+    let offset = 0;
+    let textNode: Text | null;
+    while ((textNode = offsetWalker.nextNode() as Text | null)) {
+      if (textNode === range.startContainer) {
+        return offset + range.startOffset;
+      }
+      offset += textNode.textContent?.length || 0;
+    }
+    return -1;
+  };
+
+  let wordStart = findRangeStartOffset();
+  if (wordStart === -1 || fullText.slice(wordStart, wordStart + rangeText.length) !== rangeText) {
+    // Fall back to a text search if the walk didn't land on an exact match
+    // (e.g. the range spans multiple text nodes in an unexpected way).
+    wordStart = fullText.indexOf(rangeText);
+  }
   if (wordStart === -1) return range;
 
-  // Find sentence boundaries (. ! ? or start/end of text)
-  const sentenceEnders = /[.!?]/g;
+  // Find sentence boundaries (. ! ? or start/end of text). A non-global
+  // regex is required here: `/g` regexes carry `lastIndex` state across
+  // `.test()` calls, which causes guaranteed false negatives on the call
+  // right after any match (wrong sentence boundaries for the exit highlight).
+  const isSentenceEnder = /[.!?]/;
   let sentenceStart = 0;
   let sentenceEnd = fullText.length;
 
   // Find the sentence start (look backwards for sentence ender)
   for (let i = wordStart - 1; i >= 0; i--) {
-    if (sentenceEnders.test(fullText[i]!)) {
+    if (isSentenceEnder.test(fullText[i]!)) {
       sentenceStart = i + 1;
       // Skip any whitespace after the sentence ender
       while (sentenceStart < fullText.length && /\s/.test(fullText[sentenceStart]!)) {
@@ -202,7 +227,7 @@ const expandRangeToSentence = (range: Range, doc: Document): Range => {
 
   // Find the sentence end (look forward for sentence ender)
   for (let i = wordStart; i < fullText.length; i++) {
-    if (sentenceEnders.test(fullText[i]!)) {
+    if (isSentenceEnder.test(fullText[i]!)) {
       sentenceEnd = i + 1;
       break;
     }
@@ -310,12 +335,22 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
   // the two never disagree — a disagreement would flash a countdown before the
   // replay engages. Seeded from the store for sessions already live at mount.
   const ttsSessionActiveRef = useRef(false);
+  // True once a real 'tts-playback-state' event for this book has been
+  // observed this mount. The mount-time seed above reads getViewState(), which
+  // can be stale (e.g. left true from a session that ended without this
+  // component seeing the terminal event) — a stale true seed makes handleStart
+  // start RSVP externally-driven waiting for TTS events that never arrive,
+  // freezing it. This flag lets the watchdog in handleStart tell a seed-only
+  // "active" from one corroborated by an actual live event.
+  const ttsSessionSeedCorroboratedRef = useRef(false);
   useEffect(() => {
     ttsSessionActiveRef.current = !!getViewState(bookKey)?.ttsEnabled;
+    ttsSessionSeedCorroboratedRef.current = false;
     const handlePlaybackState = (event: Event) => {
       const detail = (event as CustomEvent).detail as { bookKey?: string; state?: string };
       if (detail?.bookKey !== bookKey) return;
       ttsSessionActiveRef.current = detail.state === 'playing' || detail.state === 'paused';
+      ttsSessionSeedCorroboratedRef.current = true;
     };
     eventDispatcher.on('tts-playback-state', handlePlaybackState);
     return () => eventDispatcher.off('tts-playback-state', handlePlaybackState);
@@ -349,8 +384,8 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
   useEffect(() => {
     return () => {
       if (controllerRef.current) {
-        // Use stop() instead of shutdown() to preserve saved position across sessions
-        // shutdown() clears localStorage which loses the user's reading progress
+        // Use stop() (which preserves the saved position) rather than a teardown
+        // that clears localStorage, so reading progress survives across sessions.
         controllerRef.current.stop();
         controllerRef.current = null;
       }
@@ -707,6 +742,27 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
       const ttsSessionActive = ttsSessionActiveRef.current;
       controller.setExternallyDriven(ttsSessionActive);
 
+      // Guard against a stale mount-time seed (getViewState().ttsEnabled left
+      // true from a session whose terminal event this mount never saw). If we
+      // just started externally-driven purely off that seed — no real
+      // tts-playback-state has corroborated it yet — arm a short watchdog: if
+      // nothing corroborates it in time, the engage-on-entry effect's
+      // tts-sync-request went unanswered (useTTSControl only replays when a
+      // controller actually exists), so fall back to self-paced RSVP instead of
+      // leaving it frozen forever waiting for events that will never come.
+      if (ttsSessionActive && !ttsSessionSeedCorroboratedRef.current) {
+        const staleSeedController = controller;
+        setTimeout(() => {
+          if (controllerRef.current !== staleSeedController) return; // session changed/closed
+          if (ttsSessionSeedCorroboratedRef.current) return; // corroborated in time — leave as-is
+          if (!syncStateRef.current.following) return; // already decoupled/handled
+          syncStateRef.current.following = false;
+          syncStateRef.current.pendingSync = undefined;
+          staleSeedController.setExternallyDriven(false);
+          refreshSyncStatusRef.current?.();
+        }, 1500);
+      }
+
       // For Chinese books, preload jieba-wasm so that the synchronous word
       // extractor can use it. Done before requestStart() so the loader has
       // the dialog's interaction time to fetch ~3.8MB of WASM.
@@ -757,11 +813,10 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
 
       controller.addEventListener('rsvp-start-choice', handleStartChoice);
       controller.requestStart(selectionText);
-
-      // Clean up listener after handling
-      setTimeout(() => {
-        controller.removeEventListener('rsvp-start-choice', handleStartChoice);
-      }, 100);
+      // requestStart dispatches 'rsvp-start-choice' synchronously, so the
+      // listener has already run by the time requestStart returns — remove it
+      // directly instead of racing a timer.
+      controller.removeEventListener('rsvp-start-choice', handleStartChoice);
     },
     [_, bookKey, getBookData, getConfig, getProgress, getView, removeRsvpHighlight],
   );
@@ -779,20 +834,30 @@ const RSVPControl = forwardRef<RSVPControlHandle, RSVPControlProps>(function RSV
         controller.removeEventListener('rsvp-navigate-to-resume', handleNavigateToResume);
 
         if (view && cfi) {
-          // Navigate to the saved position's section
-          view.goTo(cfi);
-
-          // Wait for navigation, then start RSVP — start() handles word extraction
-          // and position recovery from storage directly, so loadNextPageContent()
-          // must not be called here (it would clear the saved position first)
-          setTimeout(() => {
+          // Wait for the view to actually relocate to the target section before
+          // starting RSVP — start() handles word extraction and position recovery
+          // from storage directly, so loadNextPageContent() must not be called
+          // here (it would clear the saved position first). A hardcoded delay
+          // races slow devices/large sections (extraction would run against the
+          // still-current old section), so mirror handleChapterSelect /
+          // handleRequestNextPage and wait for 'relocate' instead, with a timeout
+          // cleanup fallback in case relocate never fires.
+          let cleanup: ReturnType<typeof setTimeout> | null = null;
+          const onRelocate = () => {
+            view.removeEventListener('relocate', onRelocate);
+            if (cleanup) clearTimeout(cleanup);
             const progress = getProgress(bookKey);
             if (progress?.location) {
               controller.setCurrentCfi(progress.location);
             }
             controller.start();
             setIsActive(true);
-          }, 500);
+          };
+          view.addEventListener('relocate', onRelocate);
+          cleanup = setTimeout(() => view.removeEventListener('relocate', onRelocate), 5000);
+
+          // Navigate to the saved position's section
+          view.goTo(cfi);
         }
       };
 

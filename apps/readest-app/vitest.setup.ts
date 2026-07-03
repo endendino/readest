@@ -39,6 +39,54 @@ if (typeof globalWithCSS.CSS.escape !== 'function') {
   };
 }
 
+// This runner exposes Node's experimental `localStorage` (throws without
+// --localstorage-file), so any code — production or test — that touches it
+// crashes. Provide a plain in-memory Storage so localStorage behaves normally
+// under test (unblocks the RSVP controller/overlay suites; see review B4/F1).
+{
+  const store = new Map<string, string>();
+  const mock: Storage = {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    key: (i: number) => Array.from(store.keys())[i] ?? null,
+    removeItem: (k: string) => {
+      store.delete(k);
+    },
+    setItem: (k: string, v: string) => {
+      store.set(k, String(v));
+    },
+  };
+  const install = (target: object | undefined) => {
+    if (!target) return;
+    try {
+      Reflect.deleteProperty(target, 'localStorage');
+    } catch {
+      /* non-deletable — defineProperty below still overrides */
+    }
+    try {
+      Object.defineProperty(target, 'localStorage', {
+        configurable: true,
+        writable: true,
+        value: mock,
+      });
+    } catch {
+      try {
+        (target as Record<string, unknown>).localStorage = mock;
+      } catch {
+        /* give up on this alias */
+      }
+    }
+  };
+  // The controller code and the test file can resolve `localStorage` against
+  // different global aliases (jsdom window vs Node global), so install on all.
+  install(globalThis);
+  install(typeof window !== 'undefined' ? window : undefined);
+  install(typeof global !== 'undefined' ? (global as object) : undefined);
+}
+
 // matchMedia mock
 if (typeof window !== 'undefined' && !window.matchMedia) {
   window.matchMedia = (query: string) =>

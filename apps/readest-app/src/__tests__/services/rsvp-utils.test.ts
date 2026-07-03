@@ -517,3 +517,112 @@ describe('rsvp/utils', () => {
     });
   });
 });
+
+describe('rsvp/utils — review fixes (2026-06-28)', () => {
+  describe('punctuationPauseScale — quotes/brackets/CJK (A1/A2)', () => {
+    test('sentence punctuation inside closing quotes/brackets still pauses fully', () => {
+      expect(punctuationPauseScale('said."')).toBe(1);
+      expect(punctuationPauseScale('end.”')).toBe(1);
+      expect(punctuationPauseScale('(done.)')).toBe(1);
+      expect(punctuationPauseScale('wait…')).toBe(1);
+      expect(punctuationPauseScale('really?"')).toBe(1);
+    });
+    test('clause punctuation inside a quote gets the half beat', () => {
+      expect(punctuationPauseScale('however,”')).toBe(0.5);
+    });
+    test('CJK sentence and clause marks pause (were 0 before)', () => {
+      expect(punctuationPauseScale('结束。')).toBe(1);
+      expect(punctuationPauseScale('你好，')).toBe(0.5);
+    });
+    test('a bare closing quote or plain word is not a pause', () => {
+      expect(punctuationPauseScale('"')).toBe(0);
+      expect(punctuationPauseScale('word')).toBe(0);
+    });
+  });
+
+  describe('phraseChunkSize — dash break + 9-char budget (B7)', () => {
+    test('breaks the chunk at a dash-terminated word', () => {
+      expect(phraseChunkSize(['best—', 'of', 'all'], 9)).toBe(1);
+    });
+    test('respects the 9-char budget', () => {
+      expect(phraseChunkSize(['the', 'quick', 'brown'], 9)).toBe(2);
+      expect(phraseChunkSize(['quick', 'brown'], 9)).toBe(1);
+    });
+    test('still pulls in a second word to avoid stranding a short function word', () => {
+      expect(phraseChunkSize(['of', 'elephants'], 9)).toBe(2);
+    });
+  });
+
+  describe('latinOrpIndex — apostrophe (B6)', () => {
+    test('does not land the pivot on an interior apostrophe', () => {
+      const w = "I'm";
+      expect(w[latinOrpIndex(w)]).not.toBe("'");
+    });
+  });
+
+  describe('isCJK / containsCJK — astral (B3)', () => {
+    test('recognizes an astral CJK Extension-B character', () => {
+      expect(isCJK('\u{20000}')).toBe(true);
+      expect(containsCJK('abc\u{20000}')).toBe(true);
+    });
+  });
+
+  describe('getHyphenParts — unicode letters (B5)', () => {
+    test('splits an accented-letter compound', () => {
+      expect(getHyphenParts('café-bar')).toEqual(['café-', 'bar']);
+    });
+  });
+
+  describe('splitTextIntoWords — Hebrew maqaf (A9)', () => {
+    test('splits a maqaf compound, keeping the maqaf on the left part', () => {
+      expect(splitTextIntoWords('בית־ספר')).toEqual(['בית־', 'ספר']);
+    });
+  });
+
+  describe('latinDwellMultiplier — Hebrew-aware length bands (A7)', () => {
+    test('Latin words produce the same multipliers as before (unchanged)', () => {
+      expect(latinDwellMultiplier('extraordinary')).toBeCloseTo(1.35);
+      expect(latinDwellMultiplier('comprehend')).toBeCloseTo(1.15);
+      expect(latinDwellMultiplier('the')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('a')).toBeCloseTo(0.9);
+    });
+
+    test('a short but dense Hebrew word now gets dwell (was 1.0 before A7)', () => {
+      // 6 letters — under the old >8 Latin band (would have been 1.0), but
+      // over the lowered Hebrew >5 band.
+      expect(latinDwellMultiplier('ספרייה')).toBeGreaterThan(1.0);
+      expect(latinDwellMultiplier('ספרייה')).toBeCloseTo(1.15);
+    });
+
+    test('a longer Hebrew word crosses into the top Hebrew band', () => {
+      // 9 letters — over the lowered Hebrew >8 band.
+      expect(latinDwellMultiplier('התקדמותהתקדמות'.slice(0, 9))).toBeCloseTo(1.35);
+    });
+
+    test('a very short Hebrew word is unaffected (still under both bands)', () => {
+      expect(latinDwellMultiplier('שלום')).toBeCloseTo(1.0);
+    });
+
+    test('caps at 1.8 for a long Hebrew word with numerals', () => {
+      expect(latinDwellMultiplier('ירושלים2024')).toBeLessThanOrEqual(1.8);
+    });
+  });
+
+  describe('splitTextIntoWords - ZWSP boundary (B14)', () => {
+    test('treats a zero-width space as a word boundary', () => {
+      expect(splitTextIntoWords('alpha' + '\u200B' + 'beta')).toEqual(['alpha', 'beta']);
+    });
+
+    test('treats a ZWSP surrounded by real spaces as a boundary, not a token', () => {
+      expect(splitTextIntoWords('alpha ' + '\u200B' + ' beta')).toEqual(['alpha', 'beta']);
+    });
+
+    test('collapses consecutive ZWSPs into a single boundary', () => {
+      expect(splitTextIntoWords('alpha' + '\u200B'.repeat(2) + 'beta')).toEqual(['alpha', 'beta']);
+    });
+
+    test('ZWSP boundary works alongside normal spaces in the same string', () => {
+      expect(splitTextIntoWords('one' + '\u200B' + 'two three')).toEqual(['one', 'two', 'three']);
+    });
+  });
+});

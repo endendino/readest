@@ -51,13 +51,17 @@ const ContextWord = React.memo(function ContextWord({
   currentRef,
   orpColor,
 }: ContextWordProps) {
+  // Words are click-to-seek but are NOT individually tab-focusable/announced
+  // (#D3): ~230 windowed words would otherwise be 230 tab stops and 230 SR
+  // "button" announcements. The panel stays a single selectable/clickable
+  // region; `data-rsvp-word-clickable` marks a seek target for the delegated
+  // click handler without exposing per-word roles.
   return (
     <span
       ref={currentRef}
       data-rsvp-word-button=''
       data-rsvp-word-index={wordIndex}
-      role={isCurrent ? undefined : 'button'}
-      tabIndex={isCurrent ? undefined : 0}
+      data-rsvp-word-clickable={isCurrent ? undefined : ''}
       className={isCurrent ? undefined : 'cursor-pointer opacity-70 hover:opacity-100'}
       style={isCurrent && orpColor ? { color: orpColor } : undefined}
     >
@@ -162,9 +166,8 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const currentWord = controller.currentDisplayWord;
   const currentChunk = controller.currentDisplayChunk;
   const isChunk = currentChunk.length > 1;
-  // RTL phrases must lay their words out right-to-left, not in the default LTR
-  // flex order, or a Hebrew/Arabic chunk reads backwards.
-  const chunkIsRTL = isChunk && currentChunk.some((w) => isRTLText(w.text));
+  // Direction is applied per word in the chunk render (#C7): flipping the whole
+  // chunk RTL when only one word is RTL reverses Latin reading order.
   // Spritz-style fixation ticks above and below the ORP letter. In a chunk they
   // appear once, on the longest word, to anchor the eye without clutter.
   const longestChunkIdx = isChunk
@@ -202,7 +205,9 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [showCalibration, setShowCalibration] = useState(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY_CALIBRATED) !== '1';
+      // Per-book (review A15): a global key meant only the first book ever
+      // calibrated; scope it by book hash so each book auto-offers once.
+      return localStorage.getItem(`${STORAGE_KEY_CALIBRATED}_${controller.bookHash}`) !== '1';
     } catch {
       return false;
     }
@@ -248,6 +253,16 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const contextWordRef = useRef<HTMLSpanElement>(null);
   const contextPanelRef = useRef<HTMLDivElement>(null);
   const wordDisplayRef = useRef<HTMLDivElement>(null);
+  // Dialog root (#D2): full-screen modal surface; we move initial focus here and
+  // contain Tab within it so keyboard/SR users don't land "behind" the overlay.
+  const overlayRootRef = useRef<HTMLDivElement>(null);
+  // Shrink-to-fit for long focal words/chunks (#C1). URLs and compounds (esp.
+  // from the RSS path) or large font sizes would otherwise overflow the
+  // viewport on both sides of the ORP. We measure the word content's natural
+  // width against the available width and scale it down to fit; scaling around
+  // the centre preserves the ORP anchor for the split/whole/chunk layouts.
+  const wordMeasureRef = useRef<HTMLDivElement>(null);
+  const [wordScale, setWordScale] = useState(1);
   // Dictionary lookup from a context-panel selection (#4475). `lookup` is the
   // pending selection (drives the "Look up" pill); `dict` holds the resolved
   // word + popup placement once the dictionary is open.
@@ -269,6 +284,9 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const holdSlowActive = useRef(false);
   const isDraggingProgressBar = useRef(false);
   const wasPlayingBeforeDrag = useRef(false);
+  // rAF-coalesced progress scrub (#E2).
+  const seekRaf = useRef<number | null>(null);
+  const pendingSeekPct = useRef<number | null>(null);
   const [isProgressBarDragging, setIsProgressBarDragging] = useState(false);
   const SWIPE_THRESHOLD = 50;
   const TAP_THRESHOLD = 10;
@@ -325,6 +343,17 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       // keyboard so its inputs accept space and Escape closes it, not RSVP.
       if (isSettingsDialogOpen) return;
 
+      // The progress slider owns arrow keys while focused (#D1): the global
+      // capture handler must not steal ArrowLeft/Right, or the slider (role=slider)
+      // can never act on the arrows it declares. Its own onKeyDown seeks.
+      const active = document.activeElement;
+      if (
+        active?.getAttribute('role') === 'slider' &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+      ) {
+        return;
+      }
+
       switch (event.key) {
         case ' ':
           event.preventDefault();
@@ -334,7 +363,16 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         case 'Escape':
           event.preventDefault();
           event.stopPropagation();
-          onClose();
+          // Close the topmost open layer first (#C8): a dropdown / rate picker /
+          // pending lookup / the settings row / calibration. Only when nothing is
+          // layered on top does Escape close the whole session.
+          if (showChapterDropdown) setShowChapterDropdown(false);
+          else if (showWpmDropdown) setShowWpmDropdown(false);
+          else if (showRateDropdown) setShowRateDropdown(false);
+          else if (lookup) setLookup(null);
+          else if (showCalibration) setShowCalibration(false);
+          else if (showSettings) setShowSettings(false);
+          else onClose();
           break;
         case 'ArrowLeft':
           event.preventDefault();
@@ -380,7 +418,92 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     // Use capture phase to handle events before they reach dropdown/select elements
     document.addEventListener('keydown', handleKeyboard, { capture: true });
     return () => document.removeEventListener('keydown', handleKeyboard, { capture: true });
-  }, [state.active, controller, onClose, dict, isSettingsDialogOpen]);
+  }, [
+    state.active,
+    controller,
+    onClose,
+    dict,
+    isSettingsDialogOpen,
+    showChapterDropdown,
+    showWpmDropdown,
+    showRateDropdown,
+    lookup,
+    showCalibration,
+    showSettings,
+  ]);
+
+  // Preload the RSVP high-legibility faces (#C13). The @font-face rules use
+  // `font-display: swap`, so a cold start can flash the fallback then swap
+  // mid-session — jarring for a single-word display. Warming the two weights of
+  // both families (Atkinson Hyperlegible + Heebo; bold ORP needs 700) on mount
+  // avoids that frame. Links are added once and cleaned up on unmount.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const hrefs = [
+      '/fonts/AtkinsonHyperlegible-400.woff2',
+      '/fonts/AtkinsonHyperlegible-700.woff2',
+      '/fonts/Heebo-400.woff2',
+      '/fonts/Heebo-700.woff2',
+    ];
+    const links = hrefs.map((href) => {
+      const existing = document.head.querySelector<HTMLLinkElement>(
+        `link[rel="preload"][href="${href}"]`,
+      );
+      if (existing) return null;
+      const link = document.createElement('link');
+      link.rel = 'preload';
+      link.as = 'font';
+      link.type = 'font/woff2';
+      link.href = href;
+      link.crossOrigin = 'anonymous';
+      document.head.appendChild(link);
+      return link;
+    });
+    return () => {
+      for (const link of links) link?.remove();
+    };
+  }, []);
+
+  // Dialog focus management (#D2): move focus into the overlay on mount, and
+  // contain Tab within it. Runs once the surface is active; the dictionary /
+  // settings dialog manage their own focus while open.
+  useEffect(() => {
+    if (!state.active) return;
+    const root = overlayRootRef.current;
+    if (!root) return;
+    const focusables = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [role="slider"], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+    // Initial focus: the first control, else the root itself.
+    (focusables()[0] ?? root).focus?.();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      if (dict || isSettingsDialogOpen) return;
+      const els = focusables();
+      if (els.length === 0) {
+        event.preventDefault();
+        root.focus();
+        return;
+      }
+      const first = els[0]!;
+      const last = els[els.length - 1]!;
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (event.shiftKey) {
+        if (activeEl === first || !root.contains(activeEl)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (activeEl === last || !root.contains(activeEl)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    root.addEventListener('keydown', onKeyDown);
+    return () => root.removeEventListener('keydown', onKeyDown);
+  }, [state.active, dict, isSettingsDialogOpen]);
 
   // Auto-pause when the tab/app loses focus, so the reader never plays on
   // unseen and you don't lose your place.
@@ -403,6 +526,9 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   // cut between flashes. Off by default; cheap and no-op where unsupported.
   useEffect(() => {
     if (!state.smoothFlashes) return;
+    // Respect prefers-reduced-motion (#D5): skip the comfort fade for users who
+    // opt out of animation.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
     wordDisplayRef.current?.animate?.([{ opacity: 0.45 }, { opacity: 1 }], {
       duration: 45,
       easing: 'ease-out',
@@ -424,7 +550,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     (newWpm: number | null) => {
       if (newWpm !== null) controller.setWpm(newWpm);
       try {
-        localStorage.setItem(STORAGE_KEY_CALIBRATED, '1');
+        localStorage.setItem(`${STORAGE_KEY_CALIBRATED}_${controller.bookHash}`, '1');
       } catch {
         /* ignore */
       }
@@ -462,8 +588,12 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   // spans: slicing by character index breaks letter shaping and reverses the
   // visual order. Render them whole instead, like CJK Highlight Word (#4630).
   const isRTLWord = currentWord ? isRTLText(currentWord.text) : false;
-  const wordLetterSpacing = undefined;
-  const wordSideOffset = isCJKWord ? '0.45em' : '0.3em';
+  const currentFontSize =
+    FONT_SIZE_OPTIONS[fontSizeIndex] ?? FONT_SIZE_OPTIONS[DEFAULT_FONT_SIZE_INDEX]!;
+  // Gap between the ORP glyph and the side halves. Widened slightly (#C14) so a
+  // wide ORP glyph (W/M-class, ~0.45em half-width) doesn't collide with the
+  // before/after halves; CJK glyphs are full-width and need more.
+  const wordSideOffset = isCJKWord ? '0.5em' : '0.4em';
 
   // Time remaining calculation
   const getTimeRemaining = useCallback((): string | null => {
@@ -492,6 +622,53 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     if (contextCollapsed || lookup || dict) return;
     contextWordRef.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }, [state.currentIndex, contextCollapsed, lookup, dict]);
+
+  // Shrink-to-fit measurement (#C1). After each word/chunk/font change, compare
+  // the focal content's natural extent to the available width and scale it down
+  // to fit. We measure at the wrapper's centre and take the furthest child edge
+  // on either side (×2) so the absolutely-positioned split halves are included;
+  // `getBoundingClientRect` reads the POST-transform box, so we divide the
+  // measured extent by the currently-applied `scale` to recover the intrinsic
+  // width. That's why re-measuring converges (≤2 cycles) instead of looping —
+  // do NOT remove the `/scale` compensation.
+  useEffect(() => {
+    const container = wordDisplayRef.current;
+    const measure = wordMeasureRef.current;
+    if (!container || !measure) return;
+    const compute = () => {
+      const style = window.getComputedStyle(container);
+      const padX = parseFloat(style.paddingLeft || '0') + parseFloat(style.paddingRight || '0');
+      const available = container.clientWidth - padX;
+      if (available <= 0) return;
+      // Natural (unscaled) horizontal extent, centred on the wrapper.
+      const scale = wordScale > 0 ? wordScale : 1;
+      const measureRect = measure.getBoundingClientRect();
+      const center = measureRect.left + measureRect.width / 2;
+      let maxHalf = 0;
+      for (const child of Array.from(measure.querySelectorAll('*'))) {
+        const r = (child as HTMLElement).getBoundingClientRect();
+        if (r.width === 0) continue;
+        maxHalf = Math.max(maxHalf, Math.abs(r.left - center), Math.abs(r.right - center));
+      }
+      // Undo the current scale to recover the intrinsic half-extent.
+      const naturalWidth = (maxHalf * 2) / scale;
+      if (naturalWidth <= 0) return;
+      const next = naturalWidth > available ? Math.max(available / naturalWidth, 0.15) : 1;
+      setWordScale((prev) => (Math.abs(prev - next) > 0.01 ? next : prev));
+    };
+    compute();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => compute()) : null;
+    ro?.observe(container);
+    return () => ro?.disconnect();
+  }, [
+    state.currentIndex,
+    currentFontSize,
+    isChunk,
+    isRTLWord,
+    isCJKWord,
+    highlightWholeWord,
+    wordScale,
+  ]);
 
   useEffect(() => {
     if (!showChapterDropdown) return;
@@ -650,8 +827,12 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       const screenWidth = window.innerWidth;
       const tapX = touch.clientX;
 
+      // Symmetric mirror gestures (#C6): the left and right quarters both skip
+      // the same unit (15 words) in opposite directions, so users build one
+      // mental model. (Paragraph-symmetry isn't possible — the controller has
+      // rewindParagraph but no forward-paragraph equivalent.)
       if (tapX < screenWidth * 0.25) {
-        controller.rewindParagraph();
+        controller.skipBackward(15);
       } else if (tapX > screenWidth * 0.75) {
         controller.skipForward(15);
       } else {
@@ -678,7 +859,8 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       if (selection && !selection.isCollapsed && selection.toString().trim()) return;
       const target = (event.target as HTMLElement).closest<HTMLElement>('[data-rsvp-word-index]');
       if (!target) return;
-      if (target.getAttribute('role') !== 'button') return;
+      // Only non-current words are seek targets (#D3).
+      if (!target.hasAttribute('data-rsvp-word-clickable')) return;
       const idx = parseInt(target.getAttribute('data-rsvp-word-index') || '', 10);
       if (Number.isNaN(idx)) return;
       handleWordClick(idx);
@@ -748,20 +930,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     }
   }, []);
 
-  const handleContextKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      const target = (event.target as HTMLElement).closest<HTMLElement>('[data-rsvp-word-index]');
-      if (!target) return;
-      if (target.getAttribute('role') !== 'button') return;
-      const idx = parseInt(target.getAttribute('data-rsvp-word-index') || '', 10);
-      if (Number.isNaN(idx)) return;
-      event.preventDefault();
-      handleWordClick(idx);
-    },
-    [handleWordClick],
-  );
-
   const contextWindow = useMemo(() => {
     const len = state.words.length;
     if (len === 0) return { start: 0, end: 0 };
@@ -791,12 +959,34 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
 
   const handleProgressBarPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingProgressBar.current) return;
-    controller.seekToPosition(getProgressBarPercentage(event.clientX, event.currentTarget));
+    // Throttle the scrub to one seek per animation frame (#E2): each seek emits
+    // a full state change + re-render + scrollIntoView, so an unthrottled
+    // pointermove stream janks on mobile drags. Coalesce to the latest position.
+    const pct = getProgressBarPercentage(event.clientX, event.currentTarget);
+    pendingSeekPct.current = pct;
+    if (seekRaf.current === null) {
+      seekRaf.current = requestAnimationFrame(() => {
+        seekRaf.current = null;
+        if (pendingSeekPct.current !== null) {
+          controller.seekToPosition(pendingSeekPct.current);
+          pendingSeekPct.current = null;
+        }
+      });
+    }
   };
 
   const handleProgressBarPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingProgressBar.current) return;
     isDraggingProgressBar.current = false;
+    // Flush any coalesced seek so the final position is exact.
+    if (seekRaf.current !== null) {
+      cancelAnimationFrame(seekRaf.current);
+      seekRaf.current = null;
+    }
+    if (pendingSeekPct.current !== null) {
+      controller.seekToPosition(pendingSeekPct.current);
+      pendingSeekPct.current = null;
+    }
     setIsProgressBarDragging(false);
     // pointercancel can fire after the browser has already released the
     // capture itself (e.g. multitouch, app backgrounding), so calling
@@ -820,8 +1010,17 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const fgColor = themeCode.fg;
   const accentColor = themeCode.primary;
   const effectiveOrpColor = ORP_COLOR_OPTIONS[orpColorIndex] || accentColor;
-  const currentFontSize =
-    FONT_SIZE_OPTIONS[fontSizeIndex] ?? FONT_SIZE_OPTIONS[DEFAULT_FONT_SIZE_INDEX]!;
+  // Named, translated labels for the ORP colour swatches (#D5) — index 0 is the
+  // theme colour (labelled separately); the rest name the visible hue so a
+  // screen reader announces "Red" rather than the meaningless "Color 2".
+  const ORP_COLOR_LABELS = [
+    _('Theme color'),
+    _('Red'),
+    _('Blue'),
+    _('Green'),
+    _('Orange'),
+    _('Purple'),
+  ];
 
   // The WPM timer doesn't drive pacing while RSVP follows TTS — the voice does.
   // Replace the WPM control with an "Audio pace" affordance that opens a TTS
@@ -832,8 +1031,12 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
 
   return (
     <div
+      ref={overlayRootRef}
       data-testid='rsvp-overlay'
+      role='dialog'
+      aria-modal='true'
       aria-label={_('Speed Reading')}
+      tabIndex={-1}
       className='fixed inset-0 z-[10000] flex select-none flex-col'
       style={{
         paddingTop: `${gridInsets.top}px`,
@@ -1044,12 +1247,14 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             <div className='w-px flex-1 bg-current opacity-30' />
 
             {/* Word section */}
-            <div className='flex flex-col items-center justify-center'>
-              {/* Countdown */}
+            <div className='relative flex w-full flex-col items-center justify-center'>
+              {/* Countdown — rendered as an absolute overlay above the focal word
+                  so it never pushes the word down/up on start/resume (#C5). The
+                  pulse animation is suppressed under prefers-reduced-motion (#D5). */}
               {countdown !== null && (
-                <div className='mb-2 flex items-center justify-center'>
+                <div className='pointer-events-none absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 items-center justify-center'>
                   <span
-                    className='animate-pulse text-5xl font-bold sm:text-6xl md:text-7xl'
+                    className='text-5xl font-bold motion-safe:animate-pulse sm:text-6xl md:text-7xl'
                     style={{ color: accentColor }}
                   >
                     {countdown}
@@ -1068,89 +1273,106 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 )}
                 style={{
                   fontSize: `${currentFontSize}rem`,
-                  letterSpacing: wordLetterSpacing,
                   fontFamily,
                 }}
               >
-                {isChunk ? (
-                  <div
-                    className='flex items-baseline justify-center gap-[0.4em]'
-                    dir={chunkIsRTL ? 'rtl' : undefined}
-                  >
-                    {currentChunk.map((w, i) => {
-                      const wordIndex = state.currentIndex + i;
-                      const cjk = containsCJK(w.text);
-                      const rtl = isRTLText(w.text);
-                      if (rtl || (cjk && highlightWholeWord)) {
+                {/* Inner scaling wrapper (#C1): the positioning context for the
+                    split before/orp/after halves, and the element we shrink to
+                    fit long words. Scaling around the centre keeps the ORP
+                    anchored. */}
+                <div
+                  ref={wordMeasureRef}
+                  className='relative flex items-center justify-center'
+                  style={{ transform: wordScale < 1 ? `scale(${wordScale})` : undefined }}
+                >
+                  {isChunk ? (
+                    // Direction is applied PER WORD below (#C7) — a Latin-dominant
+                    // chunk with one Hebrew word must not flip its whole order.
+                    <div className='flex items-baseline justify-center gap-[0.4em]'>
+                      {currentChunk.map((w, i) => {
+                        const wordIndex = state.currentIndex + i;
+                        const cjk = containsCJK(w.text);
+                        const rtl = isRTLText(w.text);
+                        if (rtl || (cjk && highlightWholeWord)) {
+                          // RTL words have no ORP, so render in the default colour
+                          // (#A8); only the opt-in CJK Highlight Word mode colours the
+                          // whole word.
+                          return (
+                            <span
+                              key={wordIndex}
+                              className='font-bold'
+                              style={rtl ? undefined : { color: effectiveOrpColor }}
+                              dir={rtl ? 'rtl' : undefined}
+                            >
+                              {w.text}
+                            </span>
+                          );
+                        }
+                        const before = w.text.substring(0, w.orpIndex);
+                        const orp = w.text.charAt(w.orpIndex);
+                        const after = w.text.substring(w.orpIndex + 1);
                         return (
                           <span
                             key={wordIndex}
-                            className='font-bold'
-                            style={{ color: effectiveOrpColor }}
+                            className='opacity-60'
                             dir={rtl ? 'rtl' : undefined}
                           >
-                            {w.text}
+                            {before}
+                            <span
+                              className='relative font-bold opacity-100'
+                              style={{ color: effectiveOrpColor }}
+                            >
+                              {i === longestChunkIdx && orpTicks}
+                              {orp}
+                            </span>
+                            {after}
                           </span>
                         );
-                      }
-                      const before = w.text.substring(0, w.orpIndex);
-                      const orp = w.text.charAt(w.orpIndex);
-                      const after = w.text.substring(w.orpIndex + 1);
-                      return (
-                        <span key={wordIndex} className='opacity-60'>
-                          {before}
-                          <span
-                            className='relative font-bold opacity-100'
-                            style={{ color: effectiveOrpColor }}
-                          >
-                            {i === longestChunkIdx && orpTicks}
-                            {orp}
-                          </span>
-                          {after}
+                      })}
+                    </div>
+                  ) : currentWord ? (
+                    isRTLWord || (isCJKWord && highlightWholeWord) ? (
+                      // Whole-word mode: center the full word instead of anchoring a
+                      // single focus character. Used for CJK Highlight Word and always
+                      // for RTL words, whose shaping/order would break if sliced into
+                      // before/orp/after spans (#4630). dir=rtl restores correct letter
+                      // order and connection for RTL. RTL words have no ORP, so they
+                      // render in the default text colour (#A8); only the opt-in CJK
+                      // Highlight Word mode colours the whole word.
+                      <span
+                        className='rsvp-word-whole relative z-10 whitespace-nowrap font-bold'
+                        style={isRTLWord ? undefined : { color: effectiveOrpColor }}
+                        dir={isRTLWord ? 'rtl' : undefined}
+                      >
+                        {currentWord.text}
+                      </span>
+                    ) : (
+                      <>
+                        <span
+                          className='rsvp-word-before absolute whitespace-nowrap text-right opacity-60'
+                          style={{ right: `calc(50% + ${wordSideOffset})` }}
+                        >
+                          {wordBefore}
                         </span>
-                      );
-                    })}
-                  </div>
-                ) : currentWord ? (
-                  isRTLWord || (isCJKWord && highlightWholeWord) ? (
-                    // Whole-word mode: center the full word and color it, instead
-                    // of anchoring a single focus character. Used for CJK Highlight
-                    // Word and always for RTL words, whose shaping/order would
-                    // break if sliced into before/orp/after spans (#4630). dir=rtl
-                    // restores correct letter order and connection for RTL.
-                    <span
-                      className='rsvp-word-whole relative z-10 font-bold'
-                      style={{ color: effectiveOrpColor }}
-                      dir={isRTLWord ? 'rtl' : undefined}
-                    >
-                      {currentWord.text}
-                    </span>
+                        <span
+                          className='rsvp-word-orp relative z-10 font-bold'
+                          style={{ color: effectiveOrpColor }}
+                        >
+                          {orpTicks}
+                          {orpChar}
+                        </span>
+                        <span
+                          className='rsvp-word-after absolute whitespace-nowrap text-left opacity-60'
+                          style={{ left: `calc(50% + ${wordSideOffset})` }}
+                        >
+                          {wordAfter}
+                        </span>
+                      </>
+                    )
                   ) : (
-                    <>
-                      <span
-                        className='rsvp-word-before absolute text-right opacity-60'
-                        style={{ right: `calc(50% + ${wordSideOffset})` }}
-                      >
-                        {wordBefore}
-                      </span>
-                      <span
-                        className='rsvp-word-orp relative z-10 font-bold'
-                        style={{ color: effectiveOrpColor }}
-                      >
-                        {orpTicks}
-                        {orpChar}
-                      </span>
-                      <span
-                        className='rsvp-word-after absolute text-left opacity-60'
-                        style={{ left: `calc(50% + ${wordSideOffset})` }}
-                      >
-                        {wordAfter}
-                      </span>
-                    </>
-                  )
-                ) : (
-                  <span className='italic opacity-30'>{_('Ready')}</span>
-                )}
+                    <span className='italic opacity-30'>{_('Ready')}</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1160,8 +1382,11 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         </div>
       </div>
 
-      {/* Context panel — beneath the focal display, collapsible */}
-      <div className='mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-4 md:rounded-xl'>
+      {/* Context panel — beneath the focal display, collapsible. Marked
+          `rsvp-controls` so its own gestures (collapse header tap, word taps,
+          text selection) are never hijacked by the overlay's center tap-zone /
+          slow-mo hold handlers (#C2). */}
+      <div className='rsvp-controls mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-4 md:rounded-xl'>
         <button
           className='flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide opacity-60 transition-opacity hover:opacity-80 md:px-4 md:py-3'
           onClick={toggleContext}
@@ -1199,7 +1424,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               className='select-text text-left text-base leading-loose md:text-lg'
               style={{ fontFamily }}
               onClick={handleContextClick}
-              onKeyDown={handleContextKeyDown}
               onMouseUp={handleContextSelection}
               onTouchEnd={handleContextSelection}
             >
@@ -1260,10 +1484,18 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             onPointerUp={handleProgressBarPointerUp}
             onPointerCancel={handleProgressBarPointerUp}
             onKeyDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (e.key === 'ArrowLeft') controller.skipBackward();
-              else if (e.key === 'ArrowRight') controller.skipForward();
+              // Only claim the keys the slider actually handles (#D1): arrows
+              // seek; Tab (and everything else) must pass through so focus can
+              // leave the slider — an unconditional preventDefault trapped focus.
+              if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                e.stopPropagation();
+                controller.skipBackward();
+              } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                e.stopPropagation();
+                controller.skipForward();
+              }
             }}
             title={_('Drag to seek')}
           >
@@ -1278,8 +1510,11 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           </div>
         </div>
 
-        {/* Playback controls */}
-        <div className='relative flex items-center justify-center gap-1 md:gap-2'>
+        {/* Playback controls. The audio/settings cluster is `absolute end-0`;
+            reserve symmetric horizontal room (#C10) so the centered transport
+            (esp. the `+` button) can't slip under the cluster on narrow phones
+            (≲340px). The reserve is dropped at `sm` where width is ample. */}
+        <div className='relative flex items-center justify-center gap-1 px-[5.5rem] sm:px-0 md:gap-2'>
           <button
             aria-label={_('Rewind to paragraph')}
             className='flex cursor-pointer items-center gap-0.5 rounded-full border-none bg-transparent px-2 py-1.5 transition-colors hover:bg-gray-500/20 active:scale-95'
@@ -1331,7 +1566,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               e-ink without relying on color. */}
           <div className='absolute end-0 flex items-center gap-1'>
             <button
-              aria-label={ttsActive ? _('Pause audio') : _('Play audio')}
+              aria-label={ttsActive ? _('Stop audio') : _('Play audio')}
               className={clsx(
                 'touch-target flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-none transition-colors active:scale-95',
                 ttsActive
@@ -1339,7 +1574,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                   : 'bg-transparent hover:bg-gray-500/20',
               )}
               onClick={() => onToggleTtsAudio?.()}
-              title={ttsActive ? _('Pause audio') : _('Play audio')}
+              title={ttsActive ? _('Stop audio') : _('Play audio')}
             >
               {ttsActive ? (
                 <IoVolumeHigh
@@ -1532,8 +1767,9 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                       : 'border-transparent hover:scale-105',
                   )}
                   style={{ backgroundColor: color || accentColor }}
-                  aria-label={idx === 0 ? _('Theme color') : `Color ${idx}`}
-                  title={idx === 0 ? _('Theme color') : undefined}
+                  aria-label={idx === 0 ? _('Theme color') : ORP_COLOR_LABELS[idx]}
+                  aria-pressed={orpColorIndex === idx}
+                  title={idx === 0 ? _('Theme color') : ORP_COLOR_LABELS[idx]}
                 />
               ))}
             </div>
