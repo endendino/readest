@@ -26,6 +26,11 @@ const CSS = `
 body { line-height: 1.6; font-size: 1em; text-align: justify;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; }
+/* Headline (masthead <h1>) and in-article subheads: dial back from the
+   reader's ~2em default so long article titles (e.g. ynet) don't dominate. */
+h1 { font-size: 1.5em; }
+h2 { font-size: 1.3em; }
+h3 { font-size: 1.15em; }
 h1, h2, h3 { line-height: 1.3; }
 p { margin: 0.6em 0; }
 img { max-width: 100%; height: auto; }
