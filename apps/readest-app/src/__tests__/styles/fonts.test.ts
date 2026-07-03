@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/utils/misc', () => ({ isCJKEnv: vi.fn(() => false) }));
+vi.mock('@/utils/misc', () => ({
+  isCJKEnv: vi.fn(() => false),
+  stubTranslation: (key: string) => key,
+}));
 vi.mock('@/utils/path', () => ({
   getFilename: vi.fn((path: string) => path.split('/').pop() || path),
 }));
@@ -346,8 +349,16 @@ describe('mountAdditionalFonts', () => {
   it('should not mount CJK fonts when isCJK is false', async () => {
     await mountAdditionalFonts(document, false);
 
+    // The self-hosted Hebrew Open Sans face is always mounted (all languages),
+    // so a single <style> is present even when isCJK is false — but it must not
+    // contain any CJK @font-face rules.
     const styles = document.head.querySelectorAll('style');
-    expect(styles.length).toBe(0);
+    expect(styles.length).toBe(1);
+
+    const styleContent = styles[0]!.textContent || '';
+    expect(styleContent).not.toContain('FangSong');
+    expect(styleContent).not.toContain('Kaiti');
+    expect(styleContent).not.toContain('Heiti');
 
     const links = document.head.querySelectorAll('link');
     const hrefs = Array.from(links).map((l) => l.getAttribute('href') || '');
