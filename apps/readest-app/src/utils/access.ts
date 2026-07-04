@@ -57,11 +57,15 @@ export const isCloudSyncInPlan = (plan: UserPlan): boolean =>
   (CLOUD_SYNC_PLANS as readonly UserPlan[]).includes(plan);
 
 /**
- * Master switch for the third-party cloud-sync premium paywall. Temporarily
- * OFF: cloud sync (WebDAV / Google Drive) ships ungated to every plan — including
- * free — while the feature stabilises, and will be re-gated to
- * {@link CLOUD_SYNC_PLANS} in an upcoming release. Every gate goes through
- * {@link isCloudSyncAllowed}, so flipping this back to `true` is the whole toggle.
+ * Master switch for the third-party cloud-sync premium paywall.
+ *
+ * FORK PIN — keep this `false` permanently. This self-hosted build has no
+ * Readest account/login at all, so every device reads as the 'free' plan; if
+ * a future upstream release flips this back to `true`, WebDAV sync would
+ * silently turn off on every device (useFileSync's isReady gate). When
+ * rebasing onto a newer upstream, resolve any conflict here by KEEPING false.
+ * (Upstream: temporarily off while the feature stabilises, to be re-gated to
+ * {@link CLOUD_SYNC_PLANS}; every gate goes through {@link isCloudSyncAllowed}.)
  */
 export const CLOUD_SYNC_REQUIRES_PREMIUM = false;
 

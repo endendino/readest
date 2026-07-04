@@ -160,6 +160,21 @@ const buildAuthHeader = (username: string, password: string): string => {
 /** Public alias for callers that need to build the same Basic header. */
 export const buildBasicAuthHeader = buildAuthHeader;
 
+/**
+ * Auth headers for a WebDAV request. When BOTH credentials are empty we OMIT
+ * the Authorization header entirely (rather than sending an empty `Basic Og==`).
+ *
+ * This is "reverse-proxy injects auth" mode (fork): the app points at a
+ * same-origin path (e.g. https://host/dav) that a gateway (Caddy basic_auth)
+ * protects and whose upstream Authorization it rewrites server-side. With no
+ * Authorization set on the fetch, the browser's cached app-login credential
+ * flows through for the gateway's check; sending an empty header would clobber
+ * it and 401. When credentials ARE present (direct WebDAV, e.g. the native
+ * app) we send them as before.
+ */
+export const buildAuthHeaders = (username: string, password: string): Record<string, string> =>
+  username || password ? { Authorization: buildAuthHeader(username, password) } : {};
+
 const getFetch = () => (isTauriAppPlatform() ? tauriFetch : window.fetch.bind(window));
 
 /**
@@ -269,7 +284,7 @@ export const checkConnection = async (
     const response = await fetchFn(url, {
       method: 'PROPFIND',
       headers: {
-        Authorization: buildAuthHeader(config.username, config.password),
+        ...buildAuthHeaders(config.username, config.password),
         Depth: '0',
         'Content-Type': 'application/xml; charset=utf-8',
       },
@@ -315,7 +330,7 @@ export const listDirectory = async (
     response = await fetchFn(url, {
       method: 'PROPFIND',
       headers: {
-        Authorization: buildAuthHeader(config.username, config.password),
+        ...buildAuthHeaders(config.username, config.password),
         Depth: '1',
         'Content-Type': 'application/xml; charset=utf-8',
       },
@@ -409,7 +424,7 @@ const requestWithMethod = async (
   const url = buildUrl(config.serverUrl, path);
   const fetchFn = getFetch();
   const headers: Record<string, string> = {
-    Authorization: buildAuthHeader(config.username, config.password),
+    ...buildAuthHeaders(config.username, config.password),
     ...(init.headers || {}),
   };
   try {

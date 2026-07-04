@@ -63,7 +63,10 @@ const WebDAVForm: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
 
   const handleConnect = async () => {
-    if (!url || !username) return;
+    // username intentionally optional (fork): reverse-proxy mode injects the
+    // real credentials server-side, so an empty username/password is a valid
+    // same-origin config. checkConnection omits the Authorization header then.
+    if (!url) return;
     setIsConnecting(true);
     const normalizedRoot = normalizeRootPath(rootPath);
     const result = await checkConnection({ serverUrl: url, username, password }, normalizedRoot);
@@ -231,7 +234,7 @@ const WebDAVForm: React.FC = () => {
       <div className='flex justify-end pt-1'>
         <button
           type='submit'
-          disabled={isConnecting || !url || !username}
+          disabled={isConnecting || !url}
           className={clsx(
             'btn btn-contrast',
             'h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium',

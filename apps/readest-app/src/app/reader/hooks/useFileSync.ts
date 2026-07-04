@@ -17,6 +17,8 @@ import {
   createFileSyncProvider,
   type FileSyncBackendKind,
 } from '@/services/sync/file/providerRegistry';
+import { CFI } from '@/libs/document';
+import { isMalformedLocationCfi } from '@/utils/cfi';
 import { removeBookNoteOverlays } from '../utils/annotatorUtil';
 import { useWindowActiveChanged } from './useWindowActiveChanged';
 
@@ -147,7 +149,12 @@ export const useFileSync = (bookKey: string) => {
     if (!isPremium) return false;
     if (activeKind === 'webdav') {
       const w = settings.webdav;
-      return !!(w?.enabled && w?.serverUrl && w?.username);
+      // username is intentionally NOT required (fork): in reverse-proxy mode
+      // the gateway (e.g. Caddy basic_auth) injects the real credentials
+      // server-side, so the client config carries an empty username/password
+      // by design. Direct mode still works — missing creds just 401 →
+      // AUTH_FAILED, handled downstream.
+      return !!(w?.enabled && w?.serverUrl);
     }
     if (activeKind === 'gdrive') return !!settings.googleDrive?.enabled;
     return false;
@@ -361,6 +368,33 @@ export const useFileSync = (bookKey: string) => {
       }
 
       setConfig(bookKey, toApply);
+
+      // Live-apply a newer remote reading position to the open reader —
+      // mirrors useProgressSync.applyRemoteProgress so file sync and cloud
+      // sync feel identical (fork). Without this, a pulled position only
+      // updated the config store and the open book never moved, so switching
+      // devices looked like "sync isn't working" until the next reopen. Only
+      // ever jumps FORWARD (remote ahead of local) and never while previewing
+      // a deep-link target.
+      if (wantProgress) {
+        const localCFI = config.location;
+        const remoteCFI = toApply.location;
+        if (localCFI && remoteCFI && remoteCFI !== localCFI && !isMalformedLocationCfi(remoteCFI)) {
+          let remoteAhead = false;
+          try {
+            remoteAhead = CFI.compare(localCFI, remoteCFI) < 0;
+          } catch {
+            remoteAhead = false;
+          }
+          const view = getView(bookKey);
+          const isPreview = useReaderStore.getState().getViewState(bookKey)?.previewMode;
+          if (remoteAhead && view && !isPreview) {
+            view.goTo(remoteCFI);
+            eventDispatcher.dispatch('hint', { bookKey, message: _('Reading Progress Synced') });
+          }
+        }
+      }
+
       const latest = getConfig(bookKey);
       if (latest) await saveConfig(envConfig, bookKey, latest, settings);
       await updateLastSyncedAt(Date.now());
@@ -384,6 +418,7 @@ export const useFileSync = (bookKey: string) => {
     providerSettings,
     updateLastSyncedAt,
     handleSyncError,
+    _,
   ]);
 
   // Stash the latest callbacks in a ref so the event-bridge effect doesn't

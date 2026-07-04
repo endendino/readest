@@ -234,7 +234,9 @@ const IntegrationsPanel: React.FC = () => {
     : settings.googleDrive?.enabled
       ? 'gdrive'
       : null;
-  const webdavConfigured = !!(settings.webdav?.serverUrl && settings.webdav?.username);
+  // username intentionally optional (fork): reverse-proxy mode carries empty
+  // client credentials by design — a serverUrl alone is a usable config.
+  const webdavConfigured = !!settings.webdav?.serverUrl;
   const gdriveConfigured = !!settings.googleDrive?.accountLabel;
   const webdavStatus = settings.webdav?.enabled
     ? isWebDAVSyncing

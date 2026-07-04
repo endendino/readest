@@ -86,9 +86,12 @@ export const createWebDAVProvider = (settings: WebDAVSettings): FileSyncProvider
   };
 
   if (isTauriAppPlatform()) {
-    const authHeaders = (): Record<string, string> => ({
-      Authorization: buildBasicAuthHeader(settings.username, settings.password),
-    });
+    // Conditional like the client's buildAuthHeaders (fork): empty creds mean
+    // reverse-proxy mode — omit the header rather than sending `Basic Og==`.
+    const authHeaders = (): Record<string, string> =>
+      settings.username || settings.password
+        ? { Authorization: buildBasicAuthHeader(settings.username, settings.password) }
+        : {};
     provider.uploadStream = async (remotePath, localPath) => {
       const url = buildRequestUrl(settings.serverUrl, remotePath);
       try {
