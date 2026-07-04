@@ -39,6 +39,10 @@ ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_OBJECT_STORAGE_TYPE
 ARG NEXT_PUBLIC_STORAGE_FIXED_QUOTA
 ARG NEXT_PUBLIC_TRANSLATION_FIXED_QUOTA
+ARG NEXT_PUBLIC_FRESHRSS_ENABLED
+ARG NEXT_PUBLIC_WEBDAV_URL
+ARG NEXT_PUBLIC_WEBDAV_ENABLED
+ARG NEXT_PUBLIC_WEBDAV_ROOT_PATH
 COPY --from=dependencies /app/node_modules /app/node_modules
 COPY --from=dependencies /app/apps/readest-app/node_modules /app/apps/readest-app/node_modules
 COPY --from=dependencies /app/apps/readest-app/public/vendor /app/apps/readest-app/public/vendor
@@ -49,6 +53,9 @@ WORKDIR /app/apps/readest-app
 # next.config.mjs gates `output: 'standalone'` on BUILD_STANDALONE so other
 # web builds keep their default output.
 ENV BUILD_STANDALONE=true
+# Self-hosted web image: Next 16 + Turbopack production builds peak well above
+# the default heap; raise it so the build doesn't OOM on smaller VPS hosts.
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 RUN pnpm build-web
 
 # Production runtime ships only the standalone server, its traced node_modules,
@@ -66,6 +73,24 @@ COPY --from=build --chown=node:node /app/apps/readest-app/.next/standalone ./
 # to the server so their default relative paths resolve.
 COPY --from=build --chown=node:node /app/apps/readest-app/.next/static ./apps/readest-app/.next/static
 COPY --from=build --chown=node:node /app/apps/readest-app/public ./apps/readest-app/public
+# The web build runs under Turbopack, so @serwist/next no-ops the SW generation
+# but still clears its swDest (public/sw.js) during `next build`, deleting our
+# committed kill-switch from the build stage's public/. Copy it straight from
+# the build context (after the public/ copy above) so the final image serves it.
+COPY --chown=node:node apps/readest-app/public/sw.js ./apps/readest-app/public/sw.js
+# The `COPY --from=build public` layer above can serve a STALE cached layer for
+# newly-added static files (a BuildKit content-cache quirk — the layer was
+# cached on an earlier build and doesn't reliably invalidate when a file is
+# added to public/). Our reader/RSVP fonts are git-tracked, so copy them
+# straight from the build context to guarantee new woff2 files always ship.
+COPY --chown=node:node apps/readest-app/public/fonts ./apps/readest-app/public/fonts
+# sharp ships a platform-specific native binary that the Next standalone trace
+# doesn't reliably carry through pnpm's symlinked layout (the server then 500s
+# with "Could not load the sharp module"). Install it straight into the
+# production node_modules so the /api/img resizer has it at runtime.
+RUN npm install --no-save --no-package-lock --no-audit --no-fund \
+      --include=optional --os=linux --cpu=x64 sharp@0.35.2 \
+  && chown -R node:node /app/node_modules/sharp /app/node_modules/@img
 USER node
 EXPOSE 3000
 ENTRYPOINT ["node", "apps/readest-app/server.js"]
