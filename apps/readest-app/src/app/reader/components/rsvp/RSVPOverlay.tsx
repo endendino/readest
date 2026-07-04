@@ -884,16 +884,14 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     }
   };
 
-  // Mouse/pen: a click anywhere on the overlay pauses the reading — except on
-  // elements that are meant to do something else (header, controls, context
-  // panel, buttons, sliders, dialogs). Pause-only on purpose: while paused the
-  // context panel is visible and stray clicks must not restart playback —
-  // resuming is the play button / Space / the centre touch tap. Touch devices
-  // keep their dedicated tap zones; their synthesized clicks are filtered via
-  // lastTouchEndAtRef.
+  // Mouse/pen: a click anywhere on the overlay toggles play/pause — pause
+  // while reading, resume while paused — except on elements that are meant to
+  // do something else (header, controls, context panel, buttons, sliders,
+  // dialogs; clicks on context words seek, not resume). Touch devices keep
+  // their dedicated tap zones (skip quarters / centre toggle); their
+  // synthesized clicks are filtered via lastTouchEndAtRef.
   const handleRootClick = (event: React.MouseEvent) => {
     if (Date.now() - lastTouchEndAtRef.current < 700) return;
-    if (!transportPlaying) return;
     const target = event.target as HTMLElement;
     if (
       target.closest('.rsvp-controls, .rsvp-header, button, a, input, select, [role="slider"]')

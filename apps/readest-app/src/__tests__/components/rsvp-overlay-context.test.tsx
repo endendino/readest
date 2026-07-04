@@ -793,12 +793,21 @@ describe('RSVPOverlay — context panel only while paused + click-to-pause', () 
     expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
   });
 
-  test('a mouse click while paused does NOT resume', () => {
+  test('a mouse click while paused resumes', () => {
     const { container, controller } = renderOverlay(
       buildState({ words: words(), playing: false }),
     );
     const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
     fireEvent.click(root);
+    expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
+  });
+
+  test('clicking a context word while paused seeks — it does not resume', () => {
+    const { container, controller } = renderOverlay(
+      buildState({ words: words(), playing: false, currentIndex: 10 }),
+    );
+    fireEvent.click(container.querySelector('[data-rsvp-word-index="5"]') as HTMLElement);
+    expect(controller.seekToIndex).toHaveBeenCalledWith(5);
     expect(controller.togglePlayPause).not.toHaveBeenCalled();
   });
 
