@@ -15,6 +15,10 @@ const BOOK_KEY = 'hash123-session456';
 
 let primaryIndex = 2;
 let isFixedLayout = false;
+// Stale mount-time seed for ttsSessionActiveRef (B13): simulates
+// getViewState(bookKey)?.ttsEnabled being left true from a session whose
+// terminal event this mount never observed.
+let seededTtsEnabled = false;
 const controllerEventListeners = new Map<string, EventListener[]>();
 let controllerMock: ReturnType<typeof makeControllerMock>;
 
@@ -74,7 +78,7 @@ vi.mock('@/store/readerStore', () => {
       monospaceFont: 'Menlo',
       defaultCJKFont: 'Noto',
     }),
-    getViewState: () => null,
+    getViewState: () => (seededTtsEnabled ? { ttsEnabled: true } : null),
   };
   return {
     useReaderStore: <R,>(selector?: (s: typeof state) => R) => (selector ? selector(state) : state),
@@ -152,6 +156,7 @@ describe('RSVPControl — TTS sync wiring (slice 5, #3235)', () => {
   beforeEach(() => {
     primaryIndex = 2;
     isFixedLayout = false;
+    seededTtsEnabled = false;
     controllerEventListeners.clear();
     controllerMock = makeControllerMock();
   });
@@ -412,6 +417,72 @@ describe('RSVPControl — TTS sync wiring (slice 5, #3235)', () => {
         );
       });
       expect(handle.current?.ttsSyncStatus).toBe('decoupled');
+    });
+  });
+
+  // ─── Stale TTS-session seed watchdog (B13) ─────────────────────────────
+  // getViewState(bookKey)?.ttsEnabled seeds ttsSessionActiveRef at mount. If
+  // that flag is stale (left true from a session whose terminal event this
+  // mount never saw), handleStart starts RSVP externally-driven waiting for
+  // TTS events that never arrive — freezing it forever. A watchdog must fall
+  // back to self-paced RSVP if nothing corroborates the seed in time.
+  describe('stale TTS session seed (B13)', () => {
+    test('un-freezes RSVP when a stale seed is never corroborated by a real event', async () => {
+      seededTtsEnabled = true;
+      vi.useFakeTimers();
+      try {
+        render(
+          <RSVPControl bookKey={BOOK_KEY} gridInsets={{ top: 0, bottom: 0, left: 0, right: 0 }} />,
+        );
+        await act(async () => {
+          eventDispatcher.dispatch('rsvp-start', { bookKey: BOOK_KEY });
+          await vi.advanceTimersByTimeAsync(20);
+        });
+
+        // Stale seed makes handleStart start externally-driven immediately.
+        expect(controllerMock.setExternallyDriven).toHaveBeenCalledWith(true);
+        controllerMock.setExternallyDriven.mockClear();
+
+        // No real 'tts-playback-state' event ever arrives to corroborate the
+        // seed (useTTSControl's sync-request replay is a no-op when there's no
+        // live controller). The watchdog should fire and release RSVP.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+        expect(controllerMock.setExternallyDriven).toHaveBeenCalledWith(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test('leaves RSVP externally-driven when a real event corroborates the seed in time', async () => {
+      seededTtsEnabled = true;
+      vi.useFakeTimers();
+      try {
+        render(
+          <RSVPControl bookKey={BOOK_KEY} gridInsets={{ top: 0, bottom: 0, left: 0, right: 0 }} />,
+        );
+        await act(async () => {
+          eventDispatcher.dispatch('rsvp-start', { bookKey: BOOK_KEY });
+          await vi.advanceTimersByTimeAsync(20);
+        });
+        expect(controllerMock.setExternallyDriven).toHaveBeenCalledWith(true);
+        controllerMock.setExternallyDriven.mockClear();
+
+        // A real playback-state event corroborates the seed before the
+        // watchdog fires.
+        await act(async () => {
+          await eventDispatcher.dispatch('tts-playback-state', {
+            bookKey: BOOK_KEY,
+            state: 'playing',
+          });
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+        // The watchdog must not un-freeze a corroborated session.
+        expect(controllerMock.setExternallyDriven).not.toHaveBeenCalledWith(false);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

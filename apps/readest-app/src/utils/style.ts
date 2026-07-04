@@ -5,6 +5,7 @@ import {
   FALLBACK_FONTS,
   CJK_SANS_SERIF_FONTS,
   CJK_SERIF_FONTS,
+  HEBREW_FONT_FAMILY,
 } from '@/services/constants';
 import { ViewSettings } from '@/types/book';
 import {
@@ -30,9 +31,17 @@ const buildFontFamilyLists = (
   sansSerif: string,
   monospace: string,
   defaultCJKFont: string,
+  // Reader only: lead both stacks with Open Sans (Hebrew subset). Its @font-face
+  // is limited to the Hebrew unicode-range, so Hebrew glyphs resolve to it while
+  // Latin text skips past to the configured serif/sans font. The face is mounted
+  // in the reader iframe (see mountAdditionalFonts). Off for the RSVP overlay
+  // base (getBaseFontFamily), which prepends Heebo and has no Open-Sans face.
+  hebrewOverride = false,
 ) => {
   const lastSerifFonts = ['Georgia', 'Times New Roman'];
+  const hebrewLead = hebrewOverride ? [HEBREW_FONT_FAMILY] : [];
   const serifFonts = [
+    ...hebrewLead,
     serif,
     ...(defaultCJKFont !== serif ? [defaultCJKFont] : []),
     ...SERIF_FONTS.filter(
@@ -45,6 +54,7 @@ const buildFontFamilyLists = (
     ...FALLBACK_FONTS,
   ];
   const sansSerifFonts = [
+    ...hebrewLead,
     sansSerif,
     ...(defaultCJKFont !== sansSerif ? [defaultCJKFont] : []),
     ...SANS_SERIF_FONTS.filter((font) => font !== sansSerif && font !== defaultCJKFont),
@@ -88,7 +98,8 @@ const getFontStyles = (
   fontWeight: number,
   overrideFont: boolean,
 ) => {
-  const families = buildFontFamilyLists(serif, sansSerif, monospace, defaultCJKFont);
+  // hebrewOverride: true — reader body text should render Hebrew in Open Sans.
+  const families = buildFontFamilyLists(serif, sansSerif, monospace, defaultCJKFont, true);
   const defaultFontFamily = defaultFont.toLowerCase() === 'serif' ? '--serif' : '--sans-serif';
   const fontStyles = `
     html {

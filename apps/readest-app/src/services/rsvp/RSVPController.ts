@@ -1,18 +1,50 @@
 import { FoliateView } from '@/types/view';
 import { RsvpWord, RsvpState, RsvpPosition, RsvpStopPosition, RsvpStartChoice } from './types';
-import { containsCJK, isCJKPunctuation, splitTextIntoWords, getHyphenParts } from './utils';
+import {
+  containsCJK,
+  isCJKPunctuation,
+  splitTextIntoWords,
+  getHyphenParts,
+  punctuationPauseScale,
+  phraseChunkSize,
+  warmupWpm,
+  latinOrpIndex,
+  latinDwellMultiplier,
+} from './utils';
 import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
 import { isRangeLike } from '@/utils/range';
 
 const DEFAULT_WPM = 300;
 const MIN_WPM = 100;
-const MAX_WPM = 1000;
+const MAX_WPM = 600;
 const WPM_STEP = 50;
 const DEFAULT_PUNCTUATION_PAUSE_MS = 100;
+// Extra dwell at a paragraph start — the largest semantic pause in text — as a
+// multiple of the configured punctuation pause (review A3: 2× a full stop).
+const PARAGRAPH_PAUSE_SCALE = 2;
+// A resume (un-pause) only needs a brief re-fixation beat, never the full
+// "get ready" start delay; capped at 1s, and 0 stays instant (review C3).
+const MAX_RESUME_COUNTDOWN_SECONDS = 1;
 const PUNCTUATION_PAUSE_OPTIONS = [25, 50, 75, 100, 125, 150, 175, 200];
 const DEFAULT_SPLIT_HYPHENS = false;
 const DEFAULT_CJK_CHAR_MODE = false;
+const DEFAULT_CHUNKING = false;
+// Phrase-chunk packing: target display width in characters and how many words
+// ahead to consider when forming one chunk.
+// Max visible characters per phrase chunk (user cap: 9). A single word longer
+// than this still stands alone (phraseChunkSize returns at least 1); the overlay
+// shrink-to-fit handles the display.
+const CHUNK_CHAR_BUDGET = 9;
+const MAX_CHUNK_LOOKAHEAD = 8;
+const DEFAULT_WARMUP_RAMP = false;
+// Warm-up ramp: ease from half the target speed up to full over the first words
+// after each start/resume.
+const WARMUP_RAMP_WORDS = 8;
+const WARMUP_RAMP_START_FRACTION = 0.5;
+const DEFAULT_SMOOTH_FLASHES = false;
+// Comfort mode: a small extra beat between chunks to reinforce phrase grouping.
+const CHUNK_BEAT_MS = 35;
 const DEFAULT_START_DELAY_SECONDS = 3;
 const START_DELAY_OPTIONS = [0, 1, 2, 3];
 
@@ -34,10 +66,40 @@ const PUNCTUATION_PAUSE_KEY_PREFIX = 'readest_rsvp_pause_';
 const POSITION_KEY_PREFIX = 'readest_rsvp_pos_';
 const SPLIT_HYPHENS_KEY = 'readest_rsvp_split_hyphens';
 const CJK_CHAR_MODE_KEY = 'readest_rsvp_cjk_char_mode';
+const CHUNKING_KEY = 'readest_rsvp_chunking';
+const WARMUP_RAMP_KEY = 'readest_rsvp_warmup_ramp';
+const SMOOTH_FLASHES_KEY = 'readest_rsvp_smooth_flashes';
 const START_DELAY_KEY = 'readest_rsvp_start_delay';
 
 // Section-only CFI (no '!') sorts before any word CFI in that section.
 const stripCfiPath = (cfi: string): string => cfi.replace(/!.*\)$/, ')');
+
+// Guarded localStorage. Some sandboxed/preview environments — and the vitest
+// runner used for the controller suite — have no localStorage global, and
+// touching it throws. Routing every access through these degrades a missing
+// store to a no-op instead of crashing (previously the constructor itself could
+// throw via loadSettings before RSVP even opened). Fixes review B4.
+const lsGet = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const lsSet = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+};
+const lsRemove = (key: string): void => {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+};
 
 export class RSVPController extends EventTarget {
   private view: FoliateView;
@@ -55,6 +117,9 @@ export class RSVPController extends EventTarget {
     punctuationPauseMs: DEFAULT_PUNCTUATION_PAUSE_MS,
     splitHyphens: DEFAULT_SPLIT_HYPHENS,
     cjkCharMode: DEFAULT_CJK_CHAR_MODE,
+    chunking: DEFAULT_CHUNKING,
+    warmupRamp: DEFAULT_WARMUP_RAMP,
+    smoothFlashes: DEFAULT_SMOOTH_FLASHES,
     startDelaySeconds: DEFAULT_START_DELAY_SECONDS,
     hasCJK: false,
     progress: 0,
@@ -65,6 +130,16 @@ export class RSVPController extends EventTarget {
   private pendingStartWordIndex: number | null = null;
   private countdown: number | null = null;
   private cachedWords: { docIndex: number; doc: Document; words: RsvpWord[] } | null = null;
+  // Word index where the current play/resume began. -1 = unset (ramp inactive).
+  #rampAnchorIndex = -1;
+  // Flashes shown since the ramp anchor. The warm-up ramp eases the effective
+  // WPM up over the first WARMUP_RAMP_WORDS flashes. Counted in FLASHES, not
+  // word indices: with chunking on the index jumps by chunk size, which used to
+  // burn the whole ramp in ~2-3 flashes (review A4).
+  #rampFlashCount = 0;
+  // Press-and-hold "slow-mo": halves the effective WPM while engaged (picked up
+  // on the next scheduled word). Transient — never persisted.
+  #holdSlow = false;
 
   // Slice 3a (#3235): externally-driven sync (e.g. TTS drives RSVP word display).
   // #lastSyncIndex is a monotonic cursor so forward word-by-word sync scans from
@@ -92,6 +167,12 @@ export class RSVPController extends EventTarget {
     this.loadSettings();
   }
 
+  // The book hash (no session suffix) — lets the overlay scope per-book UI
+  // persistence like the calibration flag (review A15).
+  get bookHash(): string {
+    return this.bookId;
+  }
+
   setPrimaryLanguage(lang: string | undefined): void {
     if (this.primaryLanguage === lang) return;
     this.primaryLanguage = lang;
@@ -116,6 +197,18 @@ export class RSVPController extends EventTarget {
     if (savedCjkCharMode !== null) {
       this.state.cjkCharMode = savedCjkCharMode;
     }
+    const savedChunking = this.loadChunkingFromStorage();
+    if (savedChunking !== null) {
+      this.state.chunking = savedChunking;
+    }
+    const savedWarmupRamp = this.loadWarmupRampFromStorage();
+    if (savedWarmupRamp !== null) {
+      this.state.warmupRamp = savedWarmupRamp;
+    }
+    const savedSmoothFlashes = this.loadSmoothFlashesFromStorage();
+    if (savedSmoothFlashes !== null) {
+      this.state.smoothFlashes = savedSmoothFlashes;
+    }
     const savedStartDelay = this.loadStartDelayFromStorage();
     if (savedStartDelay !== null) {
       this.state.startDelaySeconds = savedStartDelay;
@@ -137,10 +230,39 @@ export class RSVPController extends EventTarget {
     return null;
   }
 
+  // Phrase chunking is disabled while an external driver (TTS sync) owns
+  // advancement, since that path is inherently word-by-word.
+  private get effectiveChunking(): boolean {
+    return this.state.chunking && !this.#externallyDriven;
+  }
+
+  // How many words the flash starting at the current index covers: 1, unless
+  // chunking is on, in which case an intelligent phrase chunk (char-budget +
+  // clause-aware) is formed.
+  private currentChunkSize(): number {
+    if (!this.effectiveChunking) return 1;
+    const texts = this.state.words
+      .slice(this.state.currentIndex, this.state.currentIndex + MAX_CHUNK_LOOKAHEAD)
+      .map((w) => w.text);
+    return Math.max(1, phraseChunkSize(texts, CHUNK_CHAR_BUDGET));
+  }
+
+  // The real words shown in the current flash, each keeping its own orpIndex.
+  // A single-word flash returns one word; the overlay renders length > 1 inline
+  // with real spaces, so nothing is joined and no space is ever lost.
+  get currentDisplayChunk(): RsvpWord[] {
+    const word = this.currentWord;
+    if (!word) return [];
+    const size = this.currentChunkSize();
+    if (size <= 1) return [word];
+    return this.state.words.slice(this.state.currentIndex, this.state.currentIndex + size);
+  }
+
   get currentDisplayWord(): RsvpWord | null {
     const word = this.currentWord;
     if (!word) return null;
-    if (!this.state.splitHyphens) return word;
+    // Hyphen-part display only applies to plain single-word reading.
+    if (this.effectiveChunking || !this.state.splitHyphens) return word;
     const parts = getHyphenParts(word.text);
     if (parts.length <= 1) return word;
     const partText = parts[this.state.currentPartIndex] ?? word.text;
@@ -172,7 +294,7 @@ export class RSVPController extends EventTarget {
   }
 
   private loadPunctuationPauseFromStorage(): number | null {
-    const stored = localStorage.getItem(`${PUNCTUATION_PAUSE_KEY_PREFIX}${this.bookId}`);
+    const stored = lsGet(`${PUNCTUATION_PAUSE_KEY_PREFIX}${this.bookId}`);
     if (stored) {
       const parsed = parseInt(stored, 10);
       if (!isNaN(parsed) && PUNCTUATION_PAUSE_OPTIONS.includes(parsed)) {
@@ -183,7 +305,7 @@ export class RSVPController extends EventTarget {
   }
 
   private savePunctuationPauseToStorage(pauseMs: number): void {
-    localStorage.setItem(`${PUNCTUATION_PAUSE_KEY_PREFIX}${this.bookId}`, pauseMs.toString());
+    lsSet(`${PUNCTUATION_PAUSE_KEY_PREFIX}${this.bookId}`, pauseMs.toString());
   }
 
   setWpm(wpm: number): void {
@@ -193,19 +315,28 @@ export class RSVPController extends EventTarget {
     this.emitStateChange();
   }
 
+  // Press-and-hold slow-mo (transient, not persisted). Applied on the next
+  // scheduled word via effectiveWpm; release restores full speed.
+  setHoldSlow(on: boolean): void {
+    this.#holdSlow = on;
+  }
+
   private loadWpmFromStorage(): number | null {
-    const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}${this.bookId}`);
+    const stored = lsGet(`${STORAGE_KEY_PREFIX}${this.bookId}`);
     if (stored) {
       const parsed = parseInt(stored, 10);
-      if (!isNaN(parsed) && parsed >= MIN_WPM && parsed <= MAX_WPM) {
-        return parsed;
+      if (!isNaN(parsed)) {
+        // Clamp rather than reject: a value saved before the cap was lowered
+        // (e.g. 800) should load at the 600 ceiling, not silently reset to the
+        // default (review integration finding #6).
+        return Math.max(MIN_WPM, Math.min(MAX_WPM, parsed));
       }
     }
     return null;
   }
 
   private saveWpmToStorage(wpm: number): void {
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${this.bookId}`, wpm.toString());
+    lsSet(`${STORAGE_KEY_PREFIX}${this.bookId}`, wpm.toString());
   }
 
   getSplitHyphens(): boolean {
@@ -215,7 +346,7 @@ export class RSVPController extends EventTarget {
   setSplitHyphens(value: boolean): void {
     this.state.splitHyphens = value;
     try {
-      localStorage.setItem(SPLIT_HYPHENS_KEY, value ? '1' : '0');
+      lsSet(SPLIT_HYPHENS_KEY, value ? '1' : '0');
     } catch {
       /* ignore */
     }
@@ -224,7 +355,67 @@ export class RSVPController extends EventTarget {
 
   private loadSplitHyphensFromStorage(): boolean | null {
     try {
-      const stored = localStorage.getItem(SPLIT_HYPHENS_KEY);
+      const stored = lsGet(SPLIT_HYPHENS_KEY);
+      if (stored !== null) return stored === '1';
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  setChunking(value: boolean): void {
+    this.state.chunking = value;
+    try {
+      lsSet(CHUNKING_KEY, value ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadChunkingFromStorage(): boolean | null {
+    try {
+      const stored = lsGet(CHUNKING_KEY);
+      if (stored !== null) return stored === '1';
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  setWarmupRamp(value: boolean): void {
+    this.state.warmupRamp = value;
+    try {
+      lsSet(WARMUP_RAMP_KEY, value ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadWarmupRampFromStorage(): boolean | null {
+    try {
+      const stored = lsGet(WARMUP_RAMP_KEY);
+      if (stored !== null) return stored === '1';
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  setSmoothFlashes(value: boolean): void {
+    this.state.smoothFlashes = value;
+    try {
+      lsSet(SMOOTH_FLASHES_KEY, value ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    this.emitStateChange();
+  }
+
+  private loadSmoothFlashesFromStorage(): boolean | null {
+    try {
+      const stored = lsGet(SMOOTH_FLASHES_KEY);
       if (stored !== null) return stored === '1';
     } catch {
       /* ignore */
@@ -236,7 +427,7 @@ export class RSVPController extends EventTarget {
     if (this.state.cjkCharMode === value) return;
     this.state.cjkCharMode = value;
     try {
-      localStorage.setItem(CJK_CHAR_MODE_KEY, value ? '1' : '0');
+      lsSet(CJK_CHAR_MODE_KEY, value ? '1' : '0');
     } catch {
       /* ignore */
     }
@@ -252,7 +443,7 @@ export class RSVPController extends EventTarget {
 
   private loadCjkCharModeFromStorage(): boolean | null {
     try {
-      const stored = localStorage.getItem(CJK_CHAR_MODE_KEY);
+      const stored = lsGet(CJK_CHAR_MODE_KEY);
       if (stored !== null) return stored === '1';
     } catch {
       /* ignore */
@@ -268,7 +459,7 @@ export class RSVPController extends EventTarget {
     if (!START_DELAY_OPTIONS.includes(seconds)) return;
     this.state.startDelaySeconds = seconds;
     try {
-      localStorage.setItem(START_DELAY_KEY, seconds.toString());
+      lsSet(START_DELAY_KEY, seconds.toString());
     } catch {
       /* ignore */
     }
@@ -277,7 +468,7 @@ export class RSVPController extends EventTarget {
 
   private loadStartDelayFromStorage(): number | null {
     try {
-      const stored = localStorage.getItem(START_DELAY_KEY);
+      const stored = lsGet(START_DELAY_KEY);
       if (stored !== null) {
         const parsed = parseInt(stored, 10);
         if (START_DELAY_OPTIONS.includes(parsed)) return parsed;
@@ -293,7 +484,7 @@ export class RSVPController extends EventTarget {
   }
 
   private loadPositionFromStorage(): RsvpPosition | null {
-    const stored = localStorage.getItem(`${POSITION_KEY_PREFIX}${this.bookId}`);
+    const stored = lsGet(`${POSITION_KEY_PREFIX}${this.bookId}`);
     if (stored) {
       try {
         return JSON.parse(stored) as RsvpPosition;
@@ -307,8 +498,21 @@ export class RSVPController extends EventTarget {
   private savePositionToStorage(): void {
     if (this.state.words.length === 0) return;
 
-    const currentWord = this.state.words[this.state.currentIndex];
+    let currentWord = this.state.words[this.state.currentIndex];
     if (!currentWord) return;
+
+    // A synthetic ISI blank has no node, so no word CFI can be built for it;
+    // persist the nearest following real word instead of falling back to the
+    // coarse viewport CFI (review B9).
+    if (this.isIsiBlank(currentWord)) {
+      for (let i = this.state.currentIndex + 1; i < this.state.words.length; i++) {
+        const word = this.state.words[i];
+        if (word && !this.isIsiBlank(word)) {
+          currentWord = word;
+          break;
+        }
+      }
+    }
 
     const cfi = this.getCfiForWord(currentWord) || this.currentCfi;
     if (!cfi) return;
@@ -317,11 +521,11 @@ export class RSVPController extends EventTarget {
       cfi,
       wordText: currentWord.text,
     };
-    localStorage.setItem(`${POSITION_KEY_PREFIX}${this.bookId}`, JSON.stringify(position));
+    lsSet(`${POSITION_KEY_PREFIX}${this.bookId}`, JSON.stringify(position));
   }
 
   private clearPositionFromStorage(): void {
-    localStorage.removeItem(`${POSITION_KEY_PREFIX}${this.bookId}`);
+    lsRemove(`${POSITION_KEY_PREFIX}${this.bookId}`);
   }
 
   seedPosition(position: RsvpPosition, currentLocationCfi?: string | null): void {
@@ -343,8 +547,8 @@ export class RSVPController extends EventTarget {
     }
 
     const serialized = JSON.stringify(final);
-    if (localStorage.getItem(key) === serialized) return;
-    localStorage.setItem(key, serialized);
+    if (lsGet(key) === serialized) return;
+    lsSet(key, serialized);
   }
 
   getStoredPosition(): RsvpPosition | null {
@@ -378,10 +582,11 @@ export class RSVPController extends EventTarget {
     if (targetRange) {
       for (let i = 0; i < words.length; i++) {
         const word = words[i];
-        if (!word?.range) continue;
-        if (word.docIndex !== targetSpineIndex) continue;
+        if (!word || word.docIndex !== targetSpineIndex) continue;
+        const range = this.ensureRange(word);
+        if (!range) continue;
         try {
-          if (word.range.compareBoundaryPoints(Range.START_TO_START, targetRange) >= 0) {
+          if (range.compareBoundaryPoints(Range.START_TO_START, targetRange) >= 0) {
             return i;
           }
         } catch {
@@ -394,10 +599,12 @@ export class RSVPController extends EventTarget {
     // be resolved to a range — e.g. fixed-layout pages).
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
-      if (!word?.range || word.docIndex === undefined) continue;
+      if (!word || word.docIndex === undefined) continue;
+      const range = this.ensureRange(word);
+      if (!range) continue;
       let wordCfi: string | undefined;
       try {
-        wordCfi = this.view.getCFI(word.docIndex, word.range);
+        wordCfi = this.view.getCFI(word.docIndex, range);
       } catch {
         continue;
       }
@@ -441,10 +648,33 @@ export class RSVPController extends EventTarget {
     }
   }
 
-  private getCfiForWord(word: RsvpWord | undefined): string | undefined {
-    if (!word?.range || word.docIndex === undefined) return undefined;
+  // Ranges are built lazily: extraction stores each word's text node + offset
+  // (cheap), and the Range is created and cached only when a consumer needs it
+  // (CFI generation, TTS-sync comparison). This keeps section extraction — the
+  // RSVP open path — from creating tens of thousands of Ranges up front.
+  private ensureRange(word: RsvpWord | null | undefined): Range | undefined {
+    if (!word) return undefined;
+    if (word.range) return word.range;
+    const node = word.node;
+    if (!node || word.startOffset === undefined) return undefined;
     try {
-      return this.view.getCFI(word.docIndex, word.range);
+      const range = node.ownerDocument?.createRange();
+      if (!range) return undefined;
+      range.setStart(node, word.startOffset);
+      range.setEnd(node, word.startOffset + word.text.length);
+      word.range = range; // cache for reuse
+      return range;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private getCfiForWord(word: RsvpWord | undefined): string | undefined {
+    if (word?.docIndex === undefined) return undefined;
+    const range = this.ensureRange(word);
+    if (!range) return undefined;
+    try {
+      return this.view.getCFI(word.docIndex, range);
     } catch {
       return undefined;
     }
@@ -492,6 +722,7 @@ export class RSVPController extends EventTarget {
       currentIndex: clampedStart,
       hasCJK: this.computeHasCJK(words),
     };
+    this.resetRampAnchor();
     this.emitStateChange();
 
     this.startCountdown(() => {
@@ -509,20 +740,28 @@ export class RSVPController extends EventTarget {
   resume(): void {
     if (!this.state.active) return;
     this.state.playing = true;
+    // Re-anchor so the warm-up ramp eases back in from the resume point.
+    this.resetRampAnchor();
     this.emitStateChange();
-    this.startCountdown(() => {
-      this.scheduleNextWord();
-    });
+    // An un-pause is not a cold start: cap the countdown at a brief re-fixation
+    // beat instead of replaying the full start delay (review C3). A configured
+    // delay of 0 stays instant.
+    this.startCountdown(
+      () => {
+        this.scheduleNextWord();
+      },
+      Math.min(MAX_RESUME_COUNTDOWN_SECONDS, this.state.startDelaySeconds),
+    );
   }
 
-  private startCountdown(onComplete: () => void): void {
+  private startCountdown(onComplete: () => void, seconds = this.state.startDelaySeconds): void {
     this.clearCountdown();
 
     // A delay of 0 means instant start — skip the countdown entirely. When TTS
     // owns pacing (externally driven, e.g. RSVP entered while TTS is playing),
     // there is nothing to "get ready" for, so skip it too — the spoken word
     // shows immediately and advancement is driven by syncToCfi.
-    let count = this.state.startDelaySeconds;
+    let count = seconds;
     if (count <= 0 || this.#externallyDriven) {
       onComplete();
       return;
@@ -572,7 +811,7 @@ export class RSVPController extends EventTarget {
         wordIndex: this.state.currentIndex,
         totalWords: this.state.words.length,
         text: currentWord?.text || '',
-        range: currentWord?.range,
+        range: this.ensureRange(currentWord),
         docIndex: currentWord?.docIndex,
         cfi: this.getCfiForWord(currentWord),
       };
@@ -692,12 +931,17 @@ export class RSVPController extends EventTarget {
     const selectionWords = cleanSelectionLower.split(/\s+/);
     if (selectionWords.length === 0) return -1;
 
-    const firstSelectionWord = selectionWords[0]!;
+    // Normalize with Unicode-aware classes: ASCII \w reduced every Hebrew (or
+    // any non-Latin) word to '', so '' === '' matched the first word scanned
+    // and selection-start silently anchored at the section start (review B1).
+    const normalizeWord = (text: string): string => text.replace(/[^\p{L}\p{N}]/gu, '');
+
+    const cleanFirstWord = normalizeWord(selectionWords[0]!);
+    if (!cleanFirstWord) return -1;
 
     for (let i = 0; i < words.length; i++) {
       const word = words[i]!;
-      const cleanWord = word.text.toLowerCase().replace(/[^\w]/g, '');
-      const cleanFirstWord = firstSelectionWord.replace(/[^\w]/g, '');
+      const cleanWord = normalizeWord(word.text.toLowerCase());
 
       if (
         cleanWord === cleanFirstWord ||
@@ -708,8 +952,8 @@ export class RSVPController extends EventTarget {
 
         let matchCount = 1;
         for (let j = 1; j < selectionWords.length && i + j < words.length; j++) {
-          const nextWord = words[i + j]!.text.toLowerCase().replace(/[^\w]/g, '');
-          const nextSelectionWord = selectionWords[j]!.replace(/[^\w]/g, '');
+          const nextWord = normalizeWord(words[i + j]!.text.toLowerCase());
+          const nextSelectionWord = normalizeWord(selectionWords[j]!);
           if (nextWord === nextSelectionWord || nextWord.includes(nextSelectionWord)) {
             matchCount++;
           } else {
@@ -751,6 +995,7 @@ export class RSVPController extends EventTarget {
       this.state.currentIndex + count,
     );
     this.state.currentPartIndex = 0;
+    this.resetRampAnchor();
     this.emitManualNav();
     this.emitStateChange();
   }
@@ -758,6 +1003,41 @@ export class RSVPController extends EventTarget {
   skipBackward(count: number = 10): void {
     this.state.currentIndex = Math.max(0, this.state.currentIndex - count);
     this.state.currentPartIndex = 0;
+    this.resetRampAnchor();
+    this.emitManualNav();
+    this.emitStateChange();
+  }
+
+  // Regression: the first call jumps to the start of the current paragraph;
+  // calling again while already at the start jumps to the previous paragraph.
+  rewindParagraph(): void {
+    const words = this.state.words;
+    if (words.length === 0) return;
+    const cur = Math.min(this.state.currentIndex, words.length - 1);
+
+    let curParaStart = 0;
+    for (let i = cur; i >= 0; i--) {
+      if (words[i]?.isParagraphStart) {
+        curParaStart = i;
+        break;
+      }
+    }
+
+    let target = curParaStart;
+    if (cur <= curParaStart) {
+      // Already at this paragraph's start → step back to the previous one.
+      target = 0;
+      for (let i = curParaStart - 1; i >= 0; i--) {
+        if (words[i]?.isParagraphStart) {
+          target = i;
+          break;
+        }
+      }
+    }
+
+    this.state.currentIndex = target;
+    this.state.currentPartIndex = 0;
+    this.resetRampAnchor(); // ease back in if the warm-up ramp is on
     this.emitManualNav();
     this.emitStateChange();
   }
@@ -787,18 +1067,38 @@ export class RSVPController extends EventTarget {
   seekToPosition(percentage: number): void {
     if (this.state.words.length === 0) return;
     const newIndex = Math.floor((percentage / 100) * this.state.words.length);
-    this.state.currentIndex = Math.max(0, Math.min(this.state.words.length - 1, newIndex));
+    this.state.currentIndex = this.skipPastIsiBlank(
+      Math.max(0, Math.min(this.state.words.length - 1, newIndex)),
+    );
     this.state.currentPartIndex = 0;
+    this.resetRampAnchor();
     this.emitManualNav();
     this.emitStateChange();
   }
 
   seekToIndex(index: number): void {
     if (this.state.words.length === 0) return;
-    this.state.currentIndex = Math.max(0, Math.min(this.state.words.length - 1, index));
+    this.state.currentIndex = this.skipPastIsiBlank(
+      Math.max(0, Math.min(this.state.words.length - 1, index)),
+    );
     this.state.currentPartIndex = 0;
+    this.resetRampAnchor();
     this.emitManualNav();
     this.emitStateChange();
+  }
+
+  // Synthetic ISI blank frames (inserted between consecutive identical words)
+  // have no source node. Never park a user seek on one — nudge forward to the
+  // next real word so the focal display and position save stay meaningful
+  // (review B9). Blanks are never the last entry, but clamp defensively.
+  private isIsiBlank(word: RsvpWord | undefined): boolean {
+    return !!word && !word.node && word.text.trim() === '';
+  }
+
+  private skipPastIsiBlank(index: number): number {
+    let i = index;
+    while (i < this.state.words.length && this.isIsiBlank(this.state.words[i])) i++;
+    return i < this.state.words.length ? i : index;
   }
 
   // Slice 5 (#3235): cap exposed for the non-Edge estimator's tests + callers.
@@ -934,7 +1234,7 @@ export class RSVPController extends EventTarget {
     // search backward; otherwise linear-scan forward from the cursor.
     let backward = false;
     if (cursor >= 0 && cursor < words.length) {
-      const cursorRange = words[cursor]?.range;
+      const cursorRange = this.ensureRange(words[cursor]);
       if (cursorRange && words[cursor]?.docIndex === targetSpineIndex) {
         try {
           // target.start < cursor.start  =>  cursor.start > target.start
@@ -970,8 +1270,10 @@ export class RSVPController extends EventTarget {
     let firstFollowing = -1;
     for (let i = from; i < words.length; i++) {
       const word = words[i];
-      if (!word?.range || word.docIndex !== targetSpineIndex) continue;
-      const rel = this.compareWordToTarget(word.range, targetRange);
+      if (!word || word.docIndex !== targetSpineIndex) continue;
+      const range = this.ensureRange(word);
+      if (!range) continue;
+      const rel = this.compareWordToTarget(range, targetRange);
       if (rel === 0) return i; // contains the target start
       if (rel > 0 && firstFollowing < 0) firstFollowing = i; // first word after target
     }
@@ -991,12 +1293,13 @@ export class RSVPController extends EventTarget {
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
       const word = words[mid];
-      if (!word?.range || word.docIndex !== targetSpineIndex) {
-        // Ranges without a comparable range break ordering; fall back to a
-        // linear scan from the low bound.
+      const range = word && word.docIndex === targetSpineIndex ? this.ensureRange(word) : undefined;
+      if (!range) {
+        // No comparable range breaks ordering; fall back to a linear scan from
+        // the low bound.
         return this.linearScanWord(words, targetRange, targetSpineIndex, lo);
       }
-      const rel = this.compareWordToTarget(word.range, targetRange);
+      const rel = this.compareWordToTarget(range, targetRange);
       if (rel === 0) return mid;
       if (rel < 0) {
         // word is entirely before the target — search right.
@@ -1046,22 +1349,22 @@ export class RSVPController extends EventTarget {
     const wasPlaying = this.state.playing;
     // New section => the sync cursor from the previous section is stale.
     this.#lastSyncIndex = -1;
+    // Keep `playing` as-is across the boundary: emitting false-then-true made
+    // the pause icon blink at every chapter (review C9).
     this.state = {
       ...this.state,
-      playing: false,
       words,
       currentIndex: 0,
       currentPartIndex: 0,
       hasCJK: this.computeHasCJK(words),
     };
+    this.resetRampAnchor();
     this.emitStateChange();
 
     if (wasPlaying) {
-      this.state.playing = true;
-      this.emitStateChange();
-      this.startCountdown(() => {
-        this.scheduleNextWord();
-      });
+      // Mid-flow section changes never replay the "get ready" countdown — for
+      // books with many small spine items that interrupted constantly (review C3).
+      this.scheduleNextWord();
     }
   }
 
@@ -1074,12 +1377,15 @@ export class RSVPController extends EventTarget {
     const words = this.extractWordsWithRanges();
 
     let newIndex = 0;
-    if (words.length > 0 && prevWord?.range && prevWord.docIndex !== undefined) {
+    const prevRange = this.ensureRange(prevWord);
+    if (words.length > 0 && prevRange && prevWord?.docIndex !== undefined) {
       for (let i = 0; i < words.length; i++) {
         const word = words[i];
-        if (!word?.range || word.docIndex !== prevWord.docIndex) continue;
+        if (!word || word.docIndex !== prevWord.docIndex) continue;
+        const range = this.ensureRange(word);
+        if (!range) continue;
         try {
-          if (word.range.compareBoundaryPoints(Range.START_TO_START, prevWord.range) >= 0) {
+          if (range.compareBoundaryPoints(Range.START_TO_START, prevRange) >= 0) {
             newIndex = i;
             break;
           }
@@ -1109,6 +1415,30 @@ export class RSVPController extends EventTarget {
     return words.some((word) => containsCJK(word.text));
   }
 
+  // Re-anchor the warm-up ramp at the current position. Called from every
+  // start/resume AND every user jump (skip/seek): a stale anchor used to pin a
+  // backward seek at ramp-start speed until the index re-passed it (review A5).
+  private resetRampAnchor(): void {
+    this.#rampAnchorIndex = this.state.currentIndex;
+    this.#rampFlashCount = 0;
+  }
+
+  // Effective WPM for the next flash: applies the warm-up ramp (when enabled)
+  // from the anchor set at the last start/resume/jump, else the configured WPM.
+  private effectiveWpm(): number {
+    let wpm = this.state.wpm;
+    if (this.state.warmupRamp && this.#rampAnchorIndex >= 0) {
+      wpm = warmupWpm(
+        this.state.wpm,
+        this.#rampFlashCount,
+        WARMUP_RAMP_WORDS,
+        WARMUP_RAMP_START_FRACTION,
+      );
+    }
+    if (this.#holdSlow) wpm = Math.max(MIN_WPM, Math.round(wpm * 0.5));
+    return wpm;
+  }
+
   private scheduleNextWord(): void {
     this.clearTimer();
 
@@ -1123,8 +1453,19 @@ export class RSVPController extends EventTarget {
       return;
     }
 
-    const displayWord = this.currentDisplayWord!;
-    const duration = this.getWordDisplayDuration(displayWord, this.state.wpm);
+    const wpm = this.effectiveWpm();
+    const chunk = this.currentDisplayChunk;
+    // A chunk is held for the sum of its words' durations (so the closing word's
+    // punctuation pause still applies); a single word uses its own duration,
+    // which preserves hyphen-part timing.
+    let duration =
+      chunk.length > 1
+        ? chunk.reduce((sum, w) => sum + this.getWordDisplayDuration(w, wpm), 0)
+        : this.getWordDisplayDuration(this.currentDisplayWord!, wpm);
+    // Comfort mode: a small beat between chunks reinforces phrase grouping.
+    if (this.state.smoothFlashes && chunk.length > 1) {
+      duration += CHUNK_BEAT_MS;
+    }
 
     this.playbackTimer = setTimeout(() => {
       this.advanceToNextWord();
@@ -1132,8 +1473,14 @@ export class RSVPController extends EventTarget {
   }
 
   private advanceToNextWord(): void {
+    // Each auto-advance shows one new flash (a word, chunk, or hyphen part) —
+    // this is the unit the warm-up ramp progresses in (review A4).
+    this.#rampFlashCount++;
+    const chunkSize = this.currentChunkSize();
+
+    // Hyphen-part stepping only applies to plain single-word reading.
     const word = this.currentWord;
-    if (word && this.state.splitHyphens) {
+    if (!this.effectiveChunking && word && this.state.splitHyphens) {
       const parts = getHyphenParts(word.text);
       if (this.state.currentPartIndex < parts.length - 1) {
         this.state.currentPartIndex += 1;
@@ -1143,7 +1490,7 @@ export class RSVPController extends EventTarget {
       }
     }
 
-    const newIndex = this.state.currentIndex + 1;
+    const newIndex = this.state.currentIndex + chunkSize;
 
     if (newIndex >= this.state.words.length) {
       this.dispatchEvent(new CustomEvent('rsvp-request-next-page'));
@@ -1196,8 +1543,23 @@ export class RSVPController extends EventTarget {
     doc: Document,
     docIndex: number,
   ): RsvpWord[] {
-    const excludeTags = new Set(['SCRIPT', 'STYLE', 'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
+    // FIGCAPTION: a photo caption/credit is meta-text about an image you can't see
+    // in RSVP, so it's noise — skip it like the other non-body chrome. Matters most
+    // for feed articles, which deliver captions as <figure><figcaption>.
+    const excludeTags = new Set([
+      'SCRIPT',
+      'STYLE',
+      'NAV',
+      'HEADER',
+      'FOOTER',
+      'ASIDE',
+      'FIGCAPTION',
+    ]);
     const words: RsvpWord[] = [];
+    const view = doc.defaultView;
+    // The first word inside each block-level box is flagged as a paragraph start
+    // (used by rewindParagraph). Starts true so the very first word qualifies.
+    let pendingParagraphBreak = true;
 
     const walk = (node: Node): void => {
       if (node.nodeType === Node.TEXT_NODE) {
@@ -1209,28 +1571,22 @@ export class RSVPController extends EventTarget {
           const wordStart = text.indexOf(word, offset);
           if (wordStart === -1) continue;
 
-          try {
-            const range = doc.createRange();
-            range.setStart(node, wordStart);
-            range.setEnd(node, wordStart + word.length);
+          const paraStart = pendingParagraphBreak;
+          pendingParagraphBreak = false;
 
-            // CFI is computed lazily — see savePositionToStorage(),
-            // stop(), and findWordIndexByCfi(). At 45k+ words/section,
-            // eager generation dominates extract time.
-            words.push({
-              text: word,
-              orpIndex: this.calculateORP(word),
-              pauseMultiplier: this.getPauseMultiplier(word),
-              range,
-              docIndex,
-            });
-          } catch {
-            words.push({
-              text: word,
-              orpIndex: this.calculateORP(word),
-              pauseMultiplier: this.getPauseMultiplier(word),
-            });
-          }
+          // Store the source node + offset only. Both the Range and the CFI are
+          // built lazily on demand (see ensureRange / getCfiForWord): at 45k+
+          // words/section, creating a Range per word here dominated the
+          // synchronous RSVP-open path, especially on mobile.
+          words.push({
+            text: word,
+            orpIndex: this.calculateORP(word),
+            pauseMultiplier: this.getPauseMultiplier(word),
+            node,
+            startOffset: wordStart,
+            docIndex,
+            ...(paraStart ? { isParagraphStart: true } : {}),
+          });
 
           offset = wordStart + word.length;
         }
@@ -1241,18 +1597,37 @@ export class RSVPController extends EventTarget {
 
       const el = node as HTMLElement;
       if (excludeTags.has(el.tagName.toUpperCase())) return;
+      // Cheap fast-path before the layout-touching computed-style read.
+      if (el.hidden) return;
 
-      const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+      const style = view?.getComputedStyle(el);
       if (style?.display === 'none' || style?.visibility === 'hidden') return;
 
-      for (const child of Array.from(el.childNodes)) {
+      // A block-level box begins a new paragraph; the next word pushed becomes a
+      // paragraph start. Reuses the computed style above (no extra layout cost).
+      const display = style?.display;
+      const isBlock = !!display && display !== 'contents' && !display.startsWith('inline');
+      if (isBlock) pendingParagraphBreak = true;
+
+      // Walk children directly: Array.from(childNodes) would allocate an array
+      // per element, and this runs for tens of thousands of nodes per section.
+      for (let child = el.firstChild; child; child = child.nextSibling) {
         walk(child);
       }
+
+      // Text that follows this block (back in the parent's flow, e.g. the tail
+      // of "<div>...<ul>...</ul>tail</div>") begins a new paragraph too — re-arm
+      // on exit so it is flagged isParagraphStart.
+      if (isBlock) pendingParagraphBreak = true;
     };
 
     walk(element);
 
-    // Insert a blank ISI frame between consecutive identical words.
+    // Insert a blank ISI frame between consecutive identical words (counters
+    // repetition blindness). The 0.5 multiplier is a fixed fraction of the word
+    // slot — ~100ms at 300 WPM — which is a reasonable ISI across the usable
+    // speed range (review A16: noted, kept as-is). These synthetic frames have
+    // no node; seeks and position saves skip past them (review B9).
     return words.flatMap((word, i) =>
       i + 1 < words.length && word.text === words[i + 1]!.text
         ? [word, { text: ' ', orpIndex: 0, pauseMultiplier: 0.5 }]
@@ -1274,14 +1649,7 @@ export class RSVPController extends EventTarget {
       return Math.floor(Math.max(coreLength, 1) / 2);
     }
 
-    const cleanWord = word.replace(/[^\p{L}\p{N}_]/gu, '');
-    const len = cleanWord.length;
-
-    if (len <= 1) return 0;
-    if (len <= 3) return 0;
-    if (len <= 5) return 1;
-    if (len <= 8) return 2;
-    return 3;
+    return latinOrpIndex(word);
   }
 
   private getPauseMultiplier(word: string): number {
@@ -1289,8 +1657,14 @@ export class RSVPController extends EventTarget {
 
     if (hasCJK) {
       // CJK characters are information-dense, adjust pause based on character count
-      // With semantic segmentation, words can vary in length
-      const len = word.length;
+      // With semantic segmentation, words can vary in length.
+      // Strip trailing CJK punctuation before measuring, mirroring calculateORP:
+      // "是。" is a 1-char word, not a 2-char one (review B8).
+      let len = word.length;
+      while (len > 0 && isCJKPunctuation(word[len - 1]!)) {
+        len--;
+      }
+      len = Math.max(len, 1);
       if (len >= 5) return 1.4; // Longer compound words
       if (len >= 4) return 1.3;
       if (len >= 3) return 1.2;
@@ -1298,20 +1672,20 @@ export class RSVPController extends EventTarget {
       return 0.9; // Single characters
     }
 
-    if (word.length > 12) return 1.3;
-    if (word.length > 8) return 1.1;
-    return 1.0;
+    return latinDwellMultiplier(word);
   }
 
   private getWordDisplayDuration(word: RsvpWord, wpm: number): number {
     const baseMs = 60000 / wpm;
-    let duration = baseMs * word.pauseMultiplier;
-
-    if (/[.!?,;:–—]$/.test(word.text)) {
-      duration += this.state.punctuationPauseMs;
-    }
-
-    return duration;
+    // Scale the configured punctuation pause by punctuation strength, so a comma
+    // breathes less than a full stop (previously every mark shared one flat pause).
+    // A paragraph start — the largest semantic break in text — dwells longer
+    // still: PARAGRAPH_PAUSE_SCALE × the configured pause (review A3).
+    return (
+      baseMs * word.pauseMultiplier +
+      this.state.punctuationPauseMs * punctuationPauseScale(word.text) +
+      (word.isParagraphStart ? this.state.punctuationPauseMs * PARAGRAPH_PAUSE_SCALE : 0)
+    );
   }
 
   private emitStateChange(): void {
@@ -1322,10 +1696,8 @@ export class RSVPController extends EventTarget {
     this.dispatchEvent(new CustomEvent('rsvp-countdown-change', { detail: this.countdown }));
   }
 
-  shutdown(): void {
-    this.stop();
-    this.clearPositionFromStorage();
-    this.currentCfi = null;
-    this.cachedWords = null;
-  }
+  // NOTE: there is deliberately no shutdown()/dispose() that clears the saved
+  // position — the unmount path uses stop(), which PRESERVES it so the reader
+  // can resume across sessions. A dead shutdown() that erased it was removed
+  // (review B12); startFromBeginning() is the only intended clear path.
 }

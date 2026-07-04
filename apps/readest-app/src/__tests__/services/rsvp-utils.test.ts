@@ -8,9 +8,123 @@ import {
   segmentCJKText,
   splitTextIntoWords,
   getHyphenParts,
+  punctuationPauseScale,
+  phraseChunkSize,
+  warmupWpm,
+  latinOrpIndex,
+  latinDwellMultiplier,
 } from '@/services/rsvp/utils';
 
 describe('rsvp/utils', () => {
+  describe('punctuationPauseScale', () => {
+    test('gives sentence-ending punctuation the full weight', () => {
+      expect(punctuationPauseScale('end.')).toBe(1);
+      expect(punctuationPauseScale('really?')).toBe(1);
+      expect(punctuationPauseScale('stop!')).toBe(1);
+    });
+
+    test('gives clause-level punctuation half the weight', () => {
+      expect(punctuationPauseScale('yes,')).toBe(0.5);
+      expect(punctuationPauseScale('first;')).toBe(0.5);
+      expect(punctuationPauseScale('note:')).toBe(0.5);
+      expect(punctuationPauseScale('dash—')).toBe(0.5);
+    });
+
+    test('is 0 for a word with no trailing pause punctuation', () => {
+      expect(punctuationPauseScale('word')).toBe(0);
+    });
+  });
+
+  describe('phraseChunkSize', () => {
+    test('packs words up to the character budget', () => {
+      // "The"(3) + " quick"(6) = 9 <= 14; adding " brown" would reach 15 > 14.
+      expect(phraseChunkSize(['The', 'quick', 'brown', 'fox'], 14)).toBe(2);
+    });
+
+    test('breaks after clause/sentence punctuation', () => {
+      expect(phraseChunkSize(['brown', 'fox,', 'jumped'], 14)).toBe(2);
+      expect(phraseChunkSize(['end.', 'New', 'one'], 14)).toBe(1);
+    });
+
+    test('does not strand a lone short function word', () => {
+      // "the" alone fits, but the long next word exceeds budget; pull it in anyway.
+      expect(phraseChunkSize(['the', 'extraordinary'], 14)).toBe(2);
+    });
+
+    test('always returns at least 1 word, or 0 for none', () => {
+      expect(phraseChunkSize(['single'], 14)).toBe(1);
+      expect(phraseChunkSize([], 14)).toBe(0);
+    });
+  });
+
+  describe('warmupWpm', () => {
+    test('starts at the start fraction of the target', () => {
+      expect(warmupWpm(300, 0, 8, 0.5)).toBe(150);
+    });
+
+    test('reaches the full target at the end of the ramp', () => {
+      expect(warmupWpm(300, 8, 8, 0.5)).toBe(300);
+      expect(warmupWpm(300, 20, 8, 0.5)).toBe(300);
+    });
+
+    test('eases monotonically up across the ramp', () => {
+      const a = warmupWpm(300, 2, 8, 0.5);
+      const b = warmupWpm(300, 4, 8, 0.5);
+      const c = warmupWpm(300, 6, 8, 0.5);
+      expect(a).toBeLessThan(b);
+      expect(b).toBeLessThan(c);
+      expect(c).toBeLessThan(300);
+    });
+
+    test('returns the target unchanged when the ramp is disabled', () => {
+      expect(warmupWpm(300, 0, 0, 0.5)).toBe(300);
+    });
+  });
+
+  describe('latinOrpIndex', () => {
+    test('puts short words just past the first letter (not on it)', () => {
+      expect(latinOrpIndex('to')).toBe(1);
+      expect(latinOrpIndex('the')).toBe(1);
+      expect(latinOrpIndex('hello')).toBe(1);
+    });
+
+    test('scales the pivot rightward for longer words', () => {
+      expect(latinOrpIndex('internet')).toBe(2);
+      expect(latinOrpIndex('comprehend')).toBe(3);
+      expect(latinOrpIndex('internationalization')).toBe(4);
+    });
+
+    test('skips leading punctuation so the pivot lands on a letter', () => {
+      // '"hello"' -> pivot on the core word "hello", offset past the quote.
+      expect(latinOrpIndex('"hello"')).toBe(2);
+      expect('"hello"'.charAt(latinOrpIndex('"hello"'))).toBe('e');
+    });
+
+    test('returns the first letter for single-letter / empty input', () => {
+      expect(latinOrpIndex('a')).toBe(0);
+      expect(latinOrpIndex('')).toBe(0);
+    });
+  });
+
+  describe('latinDwellMultiplier', () => {
+    test('lingers on long words and hurries very short ones', () => {
+      expect(latinDwellMultiplier('extraordinary')).toBeCloseTo(1.35);
+      expect(latinDwellMultiplier('comprehend')).toBeCloseTo(1.15);
+      expect(latinDwellMultiplier('the')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('a')).toBeCloseTo(0.9);
+    });
+
+    test('adds dwell for numerals and all-caps acronyms', () => {
+      expect(latinDwellMultiplier('2024')).toBeCloseTo(1.3);
+      expect(latinDwellMultiplier('NASA')).toBeCloseTo(1.2);
+    });
+
+    test('ignores surrounding punctuation and caps the multiplier', () => {
+      expect(latinDwellMultiplier('"the,"')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('SUPERCALIFRAGILISTIC123')).toBeLessThanOrEqual(1.8);
+    });
+  });
+
   describe('isCJK', () => {
     test('returns true for CJK Unified Ideographs', () => {
       expect(isCJK('\u4e00')).toBe(true); // first CJK character
@@ -400,6 +514,115 @@ describe('rsvp/utils', () => {
     test('splitTextIntoWords groups CJK characters when char mode is off', () => {
       // Default segmentation should group multi-character words like 喜欢 / 阅读.
       expect(splitTextIntoWords('我喜欢阅读').length).toBeLessThan(5);
+    });
+  });
+});
+
+describe('rsvp/utils — review fixes (2026-06-28)', () => {
+  describe('punctuationPauseScale — quotes/brackets/CJK (A1/A2)', () => {
+    test('sentence punctuation inside closing quotes/brackets still pauses fully', () => {
+      expect(punctuationPauseScale('said."')).toBe(1);
+      expect(punctuationPauseScale('end.”')).toBe(1);
+      expect(punctuationPauseScale('(done.)')).toBe(1);
+      expect(punctuationPauseScale('wait…')).toBe(1);
+      expect(punctuationPauseScale('really?"')).toBe(1);
+    });
+    test('clause punctuation inside a quote gets the half beat', () => {
+      expect(punctuationPauseScale('however,”')).toBe(0.5);
+    });
+    test('CJK sentence and clause marks pause (were 0 before)', () => {
+      expect(punctuationPauseScale('结束。')).toBe(1);
+      expect(punctuationPauseScale('你好，')).toBe(0.5);
+    });
+    test('a bare closing quote or plain word is not a pause', () => {
+      expect(punctuationPauseScale('"')).toBe(0);
+      expect(punctuationPauseScale('word')).toBe(0);
+    });
+  });
+
+  describe('phraseChunkSize — dash break + 9-char budget (B7)', () => {
+    test('breaks the chunk at a dash-terminated word', () => {
+      expect(phraseChunkSize(['best—', 'of', 'all'], 9)).toBe(1);
+    });
+    test('respects the 9-char budget', () => {
+      expect(phraseChunkSize(['the', 'quick', 'brown'], 9)).toBe(2);
+      expect(phraseChunkSize(['quick', 'brown'], 9)).toBe(1);
+    });
+    test('still pulls in a second word to avoid stranding a short function word', () => {
+      expect(phraseChunkSize(['of', 'elephants'], 9)).toBe(2);
+    });
+  });
+
+  describe('latinOrpIndex — apostrophe (B6)', () => {
+    test('does not land the pivot on an interior apostrophe', () => {
+      const w = "I'm";
+      expect(w[latinOrpIndex(w)]).not.toBe("'");
+    });
+  });
+
+  describe('isCJK / containsCJK — astral (B3)', () => {
+    test('recognizes an astral CJK Extension-B character', () => {
+      expect(isCJK('\u{20000}')).toBe(true);
+      expect(containsCJK('abc\u{20000}')).toBe(true);
+    });
+  });
+
+  describe('getHyphenParts — unicode letters (B5)', () => {
+    test('splits an accented-letter compound', () => {
+      expect(getHyphenParts('café-bar')).toEqual(['café-', 'bar']);
+    });
+  });
+
+  describe('splitTextIntoWords — Hebrew maqaf (A9)', () => {
+    test('splits a maqaf compound, keeping the maqaf on the left part', () => {
+      expect(splitTextIntoWords('בית־ספר')).toEqual(['בית־', 'ספר']);
+    });
+  });
+
+  describe('latinDwellMultiplier — Hebrew-aware length bands (A7)', () => {
+    test('Latin words produce the same multipliers as before (unchanged)', () => {
+      expect(latinDwellMultiplier('extraordinary')).toBeCloseTo(1.35);
+      expect(latinDwellMultiplier('comprehend')).toBeCloseTo(1.15);
+      expect(latinDwellMultiplier('the')).toBeCloseTo(1.0);
+      expect(latinDwellMultiplier('a')).toBeCloseTo(0.9);
+    });
+
+    test('a short but dense Hebrew word now gets dwell (was 1.0 before A7)', () => {
+      // 6 letters — under the old >8 Latin band (would have been 1.0), but
+      // over the lowered Hebrew >5 band.
+      expect(latinDwellMultiplier('ספרייה')).toBeGreaterThan(1.0);
+      expect(latinDwellMultiplier('ספרייה')).toBeCloseTo(1.15);
+    });
+
+    test('a longer Hebrew word crosses into the top Hebrew band', () => {
+      // 9 letters — over the lowered Hebrew >8 band.
+      expect(latinDwellMultiplier('התקדמותהתקדמות'.slice(0, 9))).toBeCloseTo(1.35);
+    });
+
+    test('a very short Hebrew word is unaffected (still under both bands)', () => {
+      expect(latinDwellMultiplier('שלום')).toBeCloseTo(1.0);
+    });
+
+    test('caps at 1.8 for a long Hebrew word with numerals', () => {
+      expect(latinDwellMultiplier('ירושלים2024')).toBeLessThanOrEqual(1.8);
+    });
+  });
+
+  describe('splitTextIntoWords - ZWSP boundary (B14)', () => {
+    test('treats a zero-width space as a word boundary', () => {
+      expect(splitTextIntoWords('alpha' + '\u200B' + 'beta')).toEqual(['alpha', 'beta']);
+    });
+
+    test('treats a ZWSP surrounded by real spaces as a boundary, not a token', () => {
+      expect(splitTextIntoWords('alpha ' + '\u200B' + ' beta')).toEqual(['alpha', 'beta']);
+    });
+
+    test('collapses consecutive ZWSPs into a single boundary', () => {
+      expect(splitTextIntoWords('alpha' + '\u200B'.repeat(2) + 'beta')).toEqual(['alpha', 'beta']);
+    });
+
+    test('ZWSP boundary works alongside normal spaces in the same string', () => {
+      expect(splitTextIntoWords('one' + '\u200B' + 'two three')).toEqual(['one', 'two', 'three']);
     });
   });
 });

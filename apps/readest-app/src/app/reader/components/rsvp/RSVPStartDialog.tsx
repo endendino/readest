@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { RsvpStartChoice } from '@/services/rsvp';
 import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -15,6 +15,58 @@ interface RSVPStartDialogProps {
 const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect, onClose }) => {
   const _ = useTranslation();
   const { themeCode, isDarkMode } = useThemeStore();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousActiveElementRef = useRef<HTMLElement | null>(null);
+  // Selecting an option mounts the RSVP overlay, which grabs focus itself. Only
+  // restore focus to the pre-dialog element on a genuine dismiss (cancel /
+  // backdrop / Escape) — never on select, or focus lands behind the overlay and
+  // defeats its own focus management (review integration finding #1).
+  const selectedRef = useRef(false);
+  const handleSelect = (option: 'beginning' | 'saved' | 'current' | 'selection') => {
+    selectedRef.current = true;
+    onSelect(option);
+  };
+
+  // Autofocus the dialog on mount (and restore focus to whatever had it on
+  // unmount) so keyboard/SR users don't land "behind" the modal, and so
+  // Escape — handled below on this focused panel — actually reaches it
+  // (review D4). Matches the CommandPalette/Dialog focus idiom.
+  useEffect(() => {
+    previousActiveElementRef.current = document.activeElement as HTMLElement;
+    const timer = setTimeout(() => {
+      dialogRef.current?.focus();
+    }, 50);
+    return () => {
+      clearTimeout(timer);
+      if (!selectedRef.current) previousActiveElementRef.current?.focus();
+      previousActiveElementRef.current = null;
+    };
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    // Simple focus containment: keep Tab cycling within the dialog's
+    // focusable elements instead of escaping to the page behind it.
+    if (e.key === 'Tab' && dialogRef.current) {
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
 
   // Use theme colors directly from themeCode (bg, fg, primary are already resolved from palette)
   // For dialog, use a slightly different background using palette['base-200'] or darken/lighten the bg
@@ -29,13 +81,15 @@ const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect
       className='fixed inset-0 z-[101] flex items-center justify-center'
       style={{ backgroundColor: backdropColor }}
       onClick={onClose}
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
     >
       {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
       <div
-        className='mx-4 w-full max-w-md rounded-2xl p-6 shadow-2xl'
+        ref={dialogRef}
+        tabIndex={-1}
+        className='mx-4 w-full max-w-md rounded-2xl p-6 shadow-2xl focus:outline-none'
         style={{ backgroundColor: bgColor, color: fgColor, opacity: 1 }}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleKeyDown}
         role='dialog'
         aria-modal='true'
         aria-labelledby='rsvp-dialog-title'
@@ -50,7 +104,7 @@ const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect
           <button
             className='flex cursor-pointer items-center gap-4 rounded-xl border-none bg-gray-500/10 px-4 py-4 text-left transition-colors hover:bg-gray-500/20'
             style={{ color: 'inherit' }}
-            onClick={() => onSelect('beginning')}
+            onClick={() => handleSelect('beginning')}
           >
             <div
               className='flex h-10 w-10 items-center justify-center rounded-full'
@@ -71,7 +125,7 @@ const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect
             <button
               className='flex cursor-pointer items-center gap-4 rounded-xl border-none bg-gray-500/10 px-4 py-4 text-left transition-colors hover:bg-gray-500/20'
               style={{ color: 'inherit' }}
-              onClick={() => onSelect('saved')}
+              onClick={() => handleSelect('saved')}
             >
               <div
                 className='flex h-10 w-10 items-center justify-center rounded-full'
@@ -90,7 +144,7 @@ const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect
           <button
             className='flex cursor-pointer items-center gap-4 rounded-xl border-none bg-gray-500/10 px-4 py-4 text-left transition-colors hover:bg-gray-500/20'
             style={{ color: 'inherit' }}
-            onClick={() => onSelect('current')}
+            onClick={() => handleSelect('current')}
           >
             <div
               className='flex h-10 w-10 items-center justify-center rounded-full'
@@ -111,7 +165,7 @@ const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect
             <button
               className='flex cursor-pointer items-center gap-4 rounded-xl border-none bg-gray-500/10 px-4 py-4 text-left transition-colors hover:bg-gray-500/20'
               style={{ color: 'inherit' }}
-              onClick={() => onSelect('selection')}
+              onClick={() => handleSelect('selection')}
             >
               <div
                 className='flex h-10 w-10 items-center justify-center rounded-full'

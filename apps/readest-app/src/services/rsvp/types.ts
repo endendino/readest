@@ -5,6 +5,9 @@ export interface RsvpWord {
   range?: Range;
   docIndex?: number;
   cfi?: string; // Canonical Fragment Identifier for precise position tracking
+  isParagraphStart?: boolean; // first word of a block-level box (for regression)
+  node?: Node; // source text node + offset; the Range is built lazily (ensureRange)
+  startOffset?: number;
 }
 
 export interface RsvpState {
@@ -17,6 +20,9 @@ export interface RsvpState {
   punctuationPauseMs: number;
   splitHyphens: boolean;
   cjkCharMode: boolean;
+  chunking: boolean;
+  warmupRamp: boolean;
+  smoothFlashes: boolean;
   startDelaySeconds: number;
   hasCJK: boolean;
   progress: number;

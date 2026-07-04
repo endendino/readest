@@ -217,6 +217,24 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
     if (updated) meta.content = updated;
   }, []);
 
+  // Ask the browser to make our origin storage persistent so it isn't evicted.
+  // Settings (incl. integration credentials) live in OPFS, which browsers
+  // evict for non-installed web apps (Safari/iOS ~7-day cap, Chrome under
+  // storage pressure) — that's what kept wiping saved connections. When
+  // granted, OPFS survives; when not (e.g. iOS Safari outside an installed
+  // PWA) this is a harmless no-op. Fire-and-forget, once per session.
+  useEffect(() => {
+    void (async () => {
+      try {
+        if (navigator.storage?.persist && !(await navigator.storage.persisted())) {
+          await navigator.storage.persist();
+        }
+      } catch {
+        /* not supported / blocked — ignore */
+      }
+    })();
+  }, []);
+
   // Make sure appService is available in all children components
   if (!appService) return;
 

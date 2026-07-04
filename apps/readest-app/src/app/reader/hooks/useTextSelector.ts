@@ -30,6 +30,13 @@ const INSTANT_HOLD_MS = 300;
 // settling in to highlight, so the pending engagement is cancelled.
 const INSTANT_HOLD_MOVE_PX = 10;
 
+// Firefox (notably on Android) ties long-press text selection to the contextmenu
+// gesture: calling preventDefault() on contextmenu cancels the selection itself.
+// Chrome/Safari suppress the menu without losing the selection, but on Firefox we
+// must NOT suppress it or the user can't select any text. The app's highlight
+// popup still appears via selectionchange.
+const IS_FIREFOX = typeof navigator !== 'undefined' && /firefox|fxios/i.test(navigator.userAgent);
+
 export const useTextSelector = (
   bookKey: string,
   contentInsets: Insets,
@@ -613,6 +620,8 @@ export const useTextSelector = (
   };
 
   const handleContextmenu = (event: Event) => {
+    // Never suppress on Firefox — doing so cancels the long-press selection.
+    if (IS_FIREFOX) return;
     if (appService?.isMobile) {
       event.preventDefault();
       event.stopPropagation();
