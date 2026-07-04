@@ -19,6 +19,7 @@ import {
 } from '@/types/book';
 import {
   HardcoverSettings,
+  FreshRSSSettings,
   KOSyncSettings,
   LibraryGroupByType,
   LibrarySortByType,
@@ -81,6 +82,21 @@ export const DEFAULT_READWISE_SETTINGS = {
   accessToken: '',
   lastSyncedAt: 0,
 } as ReadwiseSettings;
+
+export const DEFAULT_FRESHRSS_SETTINGS = {
+  // Connection lives in server-side env (see /api/freshrss). The build-time
+  // flag below just decides whether the feature surfaces by default, so it
+  // works on a fresh browser even after storage eviction. serverUrl/username/
+  // apiPassword are retained for type compatibility but are no longer used by
+  // the web client — credentials never touch the browser.
+  enabled: process.env['NEXT_PUBLIC_FRESHRSS_ENABLED'] === 'true',
+  serverUrl: '',
+  username: '',
+  apiPassword: '',
+  exportToObsidian: false,
+  obsidianFolder: 'Obsidian/Readest',
+  autoAdvanceOnRsvpEnd: true,
+} as FreshRSSSettings;
 
 export const DEFAULT_HARDCOVER_SETTINGS = {
   enabled: false,
@@ -172,6 +188,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   hardcover: DEFAULT_HARDCOVER_SETTINGS,
   webdav: DEFAULT_WEBDAV_SETTINGS,
   googleDrive: DEFAULT_GOOGLE_DRIVE_SETTINGS,
+  freshrss: DEFAULT_FRESHRSS_SETTINGS,
   aiSettings: DEFAULT_AI_SETTINGS,
 
   lastSyncedAtBooks: 0,

@@ -26,6 +26,11 @@ const CSS = `
 body { line-height: 1.6; font-size: 1em; text-align: justify;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; }
+/* Headline (masthead <h1>) and in-article subheads: dial back from the
+   reader's ~2em default so long article titles (e.g. ynet) don't dominate. */
+h1 { font-size: 1.5em; }
+h2 { font-size: 1.3em; }
+h3 { font-size: 1.15em; }
 h1, h2, h3 { line-height: 1.3; }
 p { margin: 0.6em 0; }
 img { max-width: 100%; height: auto; }
@@ -126,6 +131,21 @@ export async function buildEpub(
     );
   }
 
+  // Direction from CONTENT, not the first character. `dir="auto"` resolves on the
+  // first strong directional char, so a leading Latin word (e.g. a "Ynet" source
+  // name in the article masthead) flips a Hebrew article LTR. Count Hebrew/Arabic
+  // vs Latin strong chars over the body instead. Drives both the body alignment
+  // and the spine page-progression below.
+  const rtlSample = chapters
+    .map((c) => c.html)
+    .join(' ')
+    .replace(/<[^>]+>/g, '')
+    .slice(0, 2000);
+  const rtlCount = (rtlSample.match(/[֐-ࣿ]/g) || []).length;
+  const ltrCount = (rtlSample.match(/[A-Za-z]/g) || []).length;
+  const isRtl = rtlCount > ltrCount;
+  const bodyDir = isRtl ? 'rtl' : 'ltr';
+
   for (let i = 0; i < chapters.length; i++) {
     const chapter = chapters[i]!;
     const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -135,7 +155,7 @@ export async function buildEpub(
     <title>${escapeXml(chapter.title)}</title>
     <link rel="stylesheet" type="text/css" href="../style.css"/>
   </head>
-  <body>${chapter.html}</body>
+  <body dir="${bodyDir}">${chapter.html}</body>
 </html>`;
     await zipWriter.add(`OEBPS/chapter${i + 1}.xhtml`, new TextReader(xhtml), zipWriteOptions);
   }
@@ -164,6 +184,11 @@ export async function buildEpub(
     .filter((line) => line.length > 0)
     .join('\n    ');
 
+  // RTL page progression (page-turn direction + left/right keys). The body dir
+  // above only fixes text alignment; the spine attribute is what makes the
+  // reader treat the book as RTL. Reuse the content-derived direction.
+  const pageDir = isRtl ? ' page-progression-direction="rtl"' : '';
+
   const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="book-id" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -178,7 +203,7 @@ export async function buildEpub(
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="css" href="style.css" media-type="text/css"/>
   </manifest>
-  <spine toc="ncx">
+  <spine toc="ncx"${pageDir}>
     ${spine}
   </spine>
 </package>`;

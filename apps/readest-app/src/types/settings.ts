@@ -104,6 +104,23 @@ export interface HardcoverSettings {
   autoSync?: boolean;
 }
 
+export interface FreshRSSSettings {
+  enabled: boolean;
+  /** Base host, e.g. https://rss.iatrogeni.com (no trailing /api/greader.php). */
+  serverUrl: string;
+  username: string;
+  /** GReader API password (stored like other integration credentials). */
+  apiPassword: string;
+  /** Push article highlights to Obsidian on "Done". */
+  exportToObsidian: boolean;
+  /** WebDAV path (relative to the WebDAV root) where article clips are written,
+   *  e.g. "Obsidian/Readest" or "Obsidian/personal/marginalia/Readest". Must line
+   *  up with whatever your Obsidian WebDAV-sync plugin pulls into the vault. */
+  obsidianFolder: string;
+  /** When true, finishing an RSVP run auto-advances to the next unread. */
+  autoAdvanceOnRsvpEnd: boolean;
+}
+
 /**
  * Sort field for the WebDAV browser listing. 'name' reproduces the
  * legacy directories-first/alphabetical default; the date fields drive
@@ -322,6 +339,7 @@ export interface SystemSettings {
   hardcover: HardcoverSettings;
   webdav: WebDAVSettings;
   googleDrive: GoogleDriveSettings;
+  freshrss: FreshRSSSettings;
 
   aiSettings: AISettings;
   /**

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { MdChevronRight } from 'react-icons/md';
 import {
   RiBookOpenLine,
+  RiRssFill,
   RiRssLine,
   RiBookReadLine,
   RiBook3Line,
@@ -32,12 +33,22 @@ import HardcoverForm from './integrations/HardcoverForm';
 import SendToReadestForm from './integrations/SendToReadestForm';
 import WebDAVForm from './integrations/WebDAVForm';
 import GoogleDriveForm from './integrations/GoogleDriveForm';
+import FreshRSSForm from './integrations/FreshRSSForm';
 import { withActiveCloudProvider } from './integrations/cloudSync';
 import type { FileSyncBackendKind } from '@/services/sync/file/providerRegistry';
 import SubPageHeader from './SubPageHeader';
 import { SectionTitle, SettingLabel } from './primitives';
 
-type SubPage = 'kosync' | 'webdav' | 'gdrive' | 'readwise' | 'hardcover' | 'opds' | 'send' | null;
+type SubPage =
+  | 'kosync'
+  | 'webdav'
+  | 'gdrive'
+  | 'readwise'
+  | 'hardcover'
+  | 'opds'
+  | 'send'
+  | 'freshrss'
+  | null;
 
 /**
  * Integrations panel — single point of discovery for external service config:
@@ -120,7 +131,8 @@ const IntegrationsPanel: React.FC = () => {
       requestedSubPage === 'readwise' ||
       requestedSubPage === 'hardcover' ||
       requestedSubPage === 'opds' ||
-      requestedSubPage === 'send'
+      requestedSubPage === 'send' ||
+      requestedSubPage === 'freshrss'
     ) {
       setSubPage(requestedSubPage);
     } else if (requestedSubPage === 'cloudsync') {
@@ -198,6 +210,12 @@ const IntegrationsPanel: React.FC = () => {
         <SendToReadestForm onBack={() => setSubPage(null)} />
       </div>
     );
+  if (subPage === 'freshrss')
+    return (
+      <div className='my-4 w-full'>
+        <FreshRSSForm onBack={() => setSubPage(null)} />
+      </div>
+    );
 
   const koSyncStatus = settings.kosync?.enabled
     ? settings.kosync.username
@@ -242,6 +260,7 @@ const IntegrationsPanel: React.FC = () => {
 
   const opdsStatus =
     opdsCount > 0 ? _('{{count}} catalog', { count: opdsCount }) : _('No catalogs');
+  const freshrssStatus = settings.freshrss?.enabled ? _('Connected') : _('Not connected');
 
   return (
     <div className='my-4 w-full space-y-6'>
@@ -329,6 +348,12 @@ const IntegrationsPanel: React.FC = () => {
         <SectionTitle className='mb-2'>{_('Content Sources')}</SectionTitle>
         <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
           <div className='divide-base-200 divide-y'>
+            <IntegrationRow
+              icon={RiRssFill}
+              title={_('FreshRSS')}
+              status={freshrssStatus}
+              onClick={() => setSubPage('freshrss')}
+            />
             <IntegrationRow
               icon={RiRssLine}
               title={_('OPDS Catalogs')}

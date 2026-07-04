@@ -111,7 +111,7 @@ function composeArticleContent(title: string, byline: string, body: string): str
  *     the publisher tweaks a paragraph is recognised as the same work.
  *   - Local file inputs (docx / html / rtf) pass the sanitized chapter
  *     HTML — there's no URL, and content is the only stable handle. */
-async function htmlToBook(
+export async function htmlToBook(
   rawHtml: string,
   title: string,
   author: string,

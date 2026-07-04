@@ -23,6 +23,7 @@ import { formatTitle, getMetadataHash, getPrimaryLanguage } from '@/utils/book';
 import { getBaseFilename } from '@/utils/path';
 import { SUPPORTED_LANGNAMES } from '@/services/constants';
 import { useSettingsStore } from './settingsStore';
+import { useFeedsStore } from '@/store/feedsStore';
 import { BookData, useBookDataStore } from './bookDataStore';
 import { useLibraryStore } from './libraryStore';
 import { clearBookProgress, getBookProgress, setBookProgress } from './readerProgressStore';
@@ -282,6 +283,8 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
       }));
       const configViewSettings = config.viewSettings!;
       const globalViewSettings = settings.globalViewSettings;
+      // FreshRSS articles default to scroll mode (short, scroll-y content).
+      const isFeedArticle = !!useFeedsStore.getState().openArticles[id];
       set((state) => ({
         viewStates: {
           ...state.viewStates,
@@ -299,7 +302,11 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
             syncing: false,
             gridInsets: null,
             previewMode: false,
-            viewSettings: { ...globalViewSettings, ...configViewSettings },
+            viewSettings: {
+              ...globalViewSettings,
+              ...configViewSettings,
+              ...(isFeedArticle ? { scrolled: true } : {}),
+            },
           },
         },
       }));

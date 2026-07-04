@@ -38,6 +38,8 @@ import SideBar from './sidebar/SideBar';
 import Notebook from './notebook/Notebook';
 import BooksGrid from './BooksGrid';
 import SettingsDialog from '@/components/settings/SettingsDialog';
+import { FeedDoneButton } from './FeedDoneButton';
+import { FeedSaveButton } from './FeedSaveButton';
 
 const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ ids, settings }) => {
   const _ = useTranslation();
@@ -272,6 +274,8 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
       />
       {isSettingsDialogOpen && <SettingsDialog bookKey={settingsDialogBookKey} />}
       <Notebook />
+      <FeedDoneButton bookKey={bookKeys[0]!} bookHash={bookData.book.hash} />
+      <FeedSaveButton bookKey={bookKeys[0]!} bookHash={bookData.book.hash} />
       {showDetailsBook && (
         <BookDetailModal
           isOpen={!!showDetailsBook}
