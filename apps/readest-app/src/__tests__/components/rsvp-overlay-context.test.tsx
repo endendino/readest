@@ -567,6 +567,8 @@ describe('RSVPOverlay — dictionary lookup (#4475)', () => {
     vi.restoreAllMocks();
   });
 
+  // Paused: the context panel (where lookup selections happen) only renders
+  // while playback is paused.
   const wordsState = () =>
     buildState({
       words: Array.from({ length: 10 }, (_, i) => ({
@@ -575,7 +577,6 @@ describe('RSVPOverlay — dictionary lookup (#4475)', () => {
         pauseMultiplier: 1,
       })),
       currentIndex: 5,
-      playing: true,
     });
 
   const mockSelection = (text: string, node: Node | null) => {
@@ -610,14 +611,13 @@ describe('RSVPOverlay — dictionary lookup (#4475)', () => {
     expect(container.querySelector('[aria-label="Look up"]')).not.toBeNull();
   });
 
-  test('tapping Look up pauses playback and opens the dictionary with the selected text', () => {
-    const { container, controller } = renderOverlay(wordsState());
+  test('tapping Look up opens the dictionary with the selected text', () => {
+    const { container } = renderOverlay(wordsState());
     const panel = container.querySelector('[data-testid="rsvp-context-panel"]') as HTMLElement;
     mockSelection('serendipity', panel);
     fireEvent.mouseUp(panel);
     fireEvent.click(container.querySelector('[aria-label="Look up"]') as HTMLElement);
 
-    expect(controller.pause).toHaveBeenCalled();
     // jsdom's default viewport is desktop-sized, so the anchored popup is used.
     const popup = container.querySelector('[data-testid="rsvp-dict-popup"]');
     expect(popup).not.toBeNull();
@@ -755,6 +755,73 @@ describe('RSVPOverlay — context panel a11y (#D3)', () => {
     const current = container.querySelector('[data-rsvp-word-index="100"]') as HTMLElement;
     fireEvent.click(current);
     expect(controller.seekToIndex).not.toHaveBeenCalled();
+  });
+});
+
+describe('RSVPOverlay — context panel only while paused + click-to-pause', () => {
+  afterEach(() => cleanup());
+
+  const words = () =>
+    Array.from({ length: 20 }, (_, i) => ({ text: `w${i}`, orpIndex: 0, pauseMultiplier: 1 }));
+
+  test('the context panel is hidden while playing', () => {
+    const { container } = renderOverlay(buildState({ words: words(), playing: true }));
+    expect(container.querySelector('[data-testid="rsvp-context-panel"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Hide context"]')).toBeNull();
+  });
+
+  test('the context panel shows when paused', () => {
+    const { container } = renderOverlay(buildState({ words: words(), playing: false }));
+    expect(container.querySelector('[data-testid="rsvp-context-panel"]')).not.toBeNull();
+  });
+
+  test('the panel is width-constrained on desktop and capped at 4 lines', () => {
+    const { container } = renderOverlay(buildState({ words: words() }));
+    const wrapper = container
+      .querySelector('[data-testid="rsvp-context-panel"]')!
+      .closest('.rsvp-controls') as HTMLElement;
+    expect(wrapper.className).toContain('md:max-w-2xl');
+    const panel = container.querySelector('[data-testid="rsvp-context-panel"]') as HTMLElement;
+    // 4lh = exactly four lines of the panel's computed line-height.
+    expect(panel.className).toContain('max-h-[4lh]');
+  });
+
+  test('a mouse click on the open area pauses while playing', () => {
+    const { container, controller } = renderOverlay(buildState({ words: words(), playing: true }));
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    fireEvent.click(root);
+    expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
+  });
+
+  test('a mouse click while paused does NOT resume', () => {
+    const { container, controller } = renderOverlay(
+      buildState({ words: words(), playing: false }),
+    );
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    fireEvent.click(root);
+    expect(controller.togglePlayPause).not.toHaveBeenCalled();
+  });
+
+  test('clicking a control does not double-fire the pause (exclusion works)', () => {
+    const { container, controller } = renderOverlay(buildState({ words: words(), playing: true }));
+    // The transport pause button toggles once via its own handler; the root
+    // click-to-pause must not fire a second toggle for the same click.
+    const pauseBtn = container.querySelector('[aria-label="Pause"]') as HTMLElement;
+    expect(pauseBtn).not.toBeNull();
+    fireEvent.click(pauseBtn);
+    expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
+  });
+
+  test('a click right after a touch tap is ignored (synthesized click suppression)', () => {
+    const { container, controller } = renderOverlay(buildState({ words: words(), playing: true }));
+    const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
+    // Touch tap in the centre toggles once via the tap zone…
+    fireEvent.touchStart(root, { touches: [{ clientX: 512, clientY: 300 }] });
+    fireEvent.touchEnd(root, { changedTouches: [{ clientX: 512, clientY: 300 }] });
+    expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
+    // …and the browser's synthesized click that follows must not toggle again.
+    fireEvent.click(root);
+    expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
   });
 });
 

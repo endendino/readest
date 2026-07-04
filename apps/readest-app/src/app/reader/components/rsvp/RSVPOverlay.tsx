@@ -650,9 +650,11 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   // selecting text or has the dictionary open, so the panel does not yank the
   // selection out from under them (#4475).
   useEffect(() => {
-    if (contextCollapsed || lookup || dict) return;
+    // The panel only renders while paused; re-run on the playing flip so the
+    // reveal-on-pause lands scrolled to the current word.
+    if (transportPlaying || contextCollapsed || lookup || dict) return;
     contextWordRef.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-  }, [state.currentIndex, contextCollapsed, lookup, dict]);
+  }, [state.currentIndex, transportPlaying, contextCollapsed, lookup, dict]);
 
   // Shrink-to-fit measurement (#C1). After each word/chunk/font change, compare
   // the focal content's natural extent to the available width and scale it down
@@ -822,7 +824,14 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     }
   };
 
+  // Touch taps synthesize a trailing `click`; stamp every touch end so the
+  // mouse click-to-pause handler below can tell real mouse clicks apart and
+  // the dedicated tap zones (skip quarters / centre toggle) stay authoritative
+  // on touch devices.
+  const lastTouchEndAtRef = useRef(0);
+
   const handleTouchEnd = (event: React.TouchEvent) => {
+    lastTouchEndAtRef.current = Date.now();
     // A completed press-and-hold releases slow-mo; it is not a tap or swipe.
     if (holdSlowActive.current) {
       cancelHoldSlow();
@@ -873,6 +882,33 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         transportToggleRef.current();
       }
     }
+  };
+
+  // Mouse/pen: a click anywhere on the overlay pauses the reading — except on
+  // elements that are meant to do something else (header, controls, context
+  // panel, buttons, sliders, dialogs). Pause-only on purpose: while paused the
+  // context panel is visible and stray clicks must not restart playback —
+  // resuming is the play button / Space / the centre touch tap. Touch devices
+  // keep their dedicated tap zones; their synthesized clicks are filtered via
+  // lastTouchEndAtRef.
+  const handleRootClick = (event: React.MouseEvent) => {
+    if (Date.now() - lastTouchEndAtRef.current < 700) return;
+    if (!transportPlaying) return;
+    const target = event.target as HTMLElement;
+    if (
+      target.closest('.rsvp-controls, .rsvp-header, button, a, input, select, [role="slider"]')
+    ) {
+      return;
+    }
+    // Inner dialogs (dictionary sheet, etc.) own their clicks — but the
+    // overlay ROOT is itself role=dialog, so only bail for nested ones.
+    const dialog = target.closest('[role="dialog"]');
+    if (dialog && dialog !== event.currentTarget) return;
+    // Don't pause away an active text selection (e.g. drag-select in the word
+    // area on desktop).
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.toString().trim()) return;
+    transportToggleRef.current();
   };
 
   const handleWordClick = useCallback(
@@ -1094,6 +1130,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={cancelHoldSlow}
+      onClick={handleRootClick}
     >
       {showCalibration && (
         <RSVPCalibration
@@ -1424,11 +1461,16 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         </div>
       </div>
 
-      {/* Context panel — beneath the focal display, collapsible. Marked
-          `rsvp-controls` so its own gestures (collapse header tap, word taps,
-          text selection) are never hijacked by the overlay's center tap-zone /
-          slow-mo hold handlers (#C2). */}
-      <div className='rsvp-controls mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-4 md:rounded-xl'>
+      {/* Context panel — beneath the focal display, collapsible. Shown only
+          while PAUSED: during playback it's motion in the periphery that
+          competes with the focal word; on pause it's the re-orientation aid.
+          Constrained to a comfortable reading measure on desktop (max-w-2xl,
+          centred) instead of screen-wide. Marked `rsvp-controls` so its own
+          gestures (collapse header tap, word taps, text selection) are never
+          hijacked by the overlay's tap-zone / slow-mo hold / click-to-pause
+          handlers (#C2). */}
+      {!transportPlaying && (
+        <div className='rsvp-controls mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-auto md:w-full md:max-w-2xl md:rounded-xl'>
         <button
           className='flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide opacity-60 transition-opacity hover:opacity-80 md:px-4 md:py-3'
           onClick={toggleContext}
@@ -1456,7 +1498,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         </button>
         {!contextCollapsed && (
           <div
-            className='max-h-[16vh] overflow-y-auto px-3 pb-3 md:px-4 md:pb-4'
+            className='px-3 pb-3 md:px-4 md:pb-4'
             onTouchStart={(e) => e.stopPropagation()}
             onTouchEnd={(e) => e.stopPropagation()}
           >
@@ -1465,7 +1507,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               data-testid='rsvp-context-panel'
               dir={isRTLDoc ? 'rtl' : 'ltr'}
               className={clsx(
-                'select-text text-base leading-loose md:text-lg',
+                // 4lh = exactly four lines of THIS element's computed
+                // line-height, robust across breakpoints (md:text-lg swaps
+                // both font-size and line-height).
+                'max-h-[4lh] select-text overflow-y-auto text-base leading-loose md:text-lg',
                 isRTLDoc ? 'text-right' : 'text-left',
               )}
               style={{ fontFamily }}
@@ -1492,7 +1537,8 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             </div>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className='rsvp-controls shrink-0 px-3 pb-6 pt-3 md:px-4 md:pb-8 md:pt-4'>
