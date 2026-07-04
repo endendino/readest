@@ -1307,7 +1307,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               <div
                 ref={wordDisplayRef}
                 className={clsx(
-                  'rsvp-word relative flex min-h-16 w-full items-center justify-center whitespace-nowrap px-2 py-2 font-medium leading-none tracking-wide sm:min-h-20 sm:px-4 sm:py-4',
+                  'rsvp-word relative flex min-h-16 w-full items-center justify-center whitespace-nowrap px-2 py-2 font-medium leading-none sm:min-h-20 sm:px-4 sm:py-4',
                   // Fall back to a fixed-width font only when the reader has no
                   // configured font face/family to apply.
                   !fontFamily && 'font-mono',
@@ -1353,14 +1353,15 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                         const orp = w.text.charAt(w.orpIndex);
                         const after = w.text.substring(w.orpIndex + 1);
                         return (
-                          <span
-                            key={wordIndex}
-                            className='opacity-60'
-                            dir={rtl ? 'rtl' : undefined}
-                          >
+                          // No opacity on the word span: dimming here also dims
+                          // the nested ORP (CSS group-opacity — a child can't be
+                          // more opaque than its parent), so the highlight never
+                          // popped in chunk mode. Non-focus letters render at full
+                          // colour; the ORP stands out via colour + weight.
+                          <span key={wordIndex} dir={rtl ? 'rtl' : undefined}>
                             {before}
                             <span
-                              className='relative font-bold opacity-100'
+                              className='relative font-bold'
                               style={{ color: effectiveOrpColor }}
                             >
                               {i === longestChunkIdx && orpTicks}
@@ -1390,7 +1391,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                     ) : (
                       <>
                         <span
-                          className='rsvp-word-before absolute whitespace-nowrap text-right opacity-60'
+                          className='rsvp-word-before absolute whitespace-nowrap text-right'
                           style={{ right: `calc(50% + ${wordSideOffset})` }}
                         >
                           {wordBefore}
@@ -1403,7 +1404,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                           {orpChar}
                         </span>
                         <span
-                          className='rsvp-word-after absolute whitespace-nowrap text-left opacity-60'
+                          className='rsvp-word-after absolute whitespace-nowrap text-left'
                           style={{ left: `calc(50% + ${wordSideOffset})` }}
                         >
                           {wordAfter}
