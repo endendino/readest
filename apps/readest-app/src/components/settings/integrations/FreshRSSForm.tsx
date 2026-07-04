@@ -30,7 +30,14 @@ const FreshRSSForm: React.FC<FreshRSSFormProps> = ({ onBack }) => {
   const [obsidianFolder, setObsidianFolder] = useState(fr?.obsidianFolder ?? 'Obsidian/Readest');
 
   const persist = async (next: Partial<FreshRSSSettings>) => {
-    const newSettings = { ...settings, freshrss: { ...settings.freshrss, ...next } };
+    // Read the LATEST settings from the store, not the render closure: on
+    // mobile the WebDAV sync hooks write settings (deviceId, lastSyncedAt)
+    // concurrently, and rebuilding the object from a stale snapshot would
+    // silently clobber those writes — or lose OUR `enabled: true` when a
+    // sibling write lands right after (the "test works but Feeds says not
+    // connected" failure). Same pattern as useFileSync.updateLastSyncedAt.
+    const latest = useSettingsStore.getState().settings;
+    const newSettings = { ...latest, freshrss: { ...latest.freshrss, ...next } };
     setSettings(newSettings);
     await saveSettings(envConfig, newSettings);
   };
