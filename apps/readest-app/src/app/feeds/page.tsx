@@ -7,6 +7,7 @@ import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useFeedsStore } from '@/store/feedsStore';
+import { pokeLocalObsidianPull } from '@/services/freshrss/obsidianExport';
 import { FolderFeedList } from './components/FolderFeedList';
 import { ArticleList } from './components/ArticleList';
 
@@ -43,6 +44,13 @@ export default function FeedsPage() {
   useEffect(() => {
     if (fr?.enabled) void loadFoldersAndFeeds(fr);
   }, [fr, loadFoldersAndFeeds]);
+
+  // Opening Feeds on the desktop nudges the local clip-puller (a loopback
+  // launchd agent) so notes saved from OTHER devices (phone) get pulled into
+  // the Obsidian vault now. No-op on machines without the agent.
+  useEffect(() => {
+    pokeLocalObsidianPull();
+  }, []);
 
   const onBack = () => {
     if (currentStreamId) clearCurrentStream();

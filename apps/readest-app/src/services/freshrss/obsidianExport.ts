@@ -43,6 +43,30 @@ export function renderArticleMarkdown(meta: ArticleMeta, highlights: ArticleHigh
 }
 
 /**
+ * Optional desktop bridge: a socket-activated launchd agent on the user's
+ * laptop listens on this loopback port and, when poked, pulls
+ * `Obsidian/Readest` from the WebDAV server into the local Obsidian vault
+ * (Obsidian Sync propagates it onward). Fire-and-forget by design — on
+ * machines without the agent (phone, other browsers) the request fails or
+ * times out silently and the clip simply waits on the server for the next
+ * laptop-side poke. See ~/.local/bin/readest-obsidian-pull.sh +
+ * com.readest.obsidian-pull launchd agent.
+ */
+const LOCAL_PULL_TRIGGER_URL = 'http://127.0.0.1:43117/pull';
+
+export const pokeLocalObsidianPull = (): void => {
+  try {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 1000);
+    void fetch(LOCAL_PULL_TRIGGER_URL, { mode: 'no-cors', signal: ctrl.signal }).catch(() => {
+      /* no agent on this machine — expected */
+    });
+  } catch {
+    /* never let the bridge affect the save flow */
+  }
+};
+
+/**
  * Write the article's highlights as a markdown note to the user's WebDAV server
  * under `Obsidian/Readest/` (nginx `create_full_put_path` auto-creates the
  * folders). The user points Obsidian (e.g. the remotely-save plugin) at that
@@ -75,6 +99,7 @@ export async function exportArticleHighlights(
     body: markdown,
   });
   if (!res.ok) throw new Error(`Obsidian export failed: HTTP ${res.status}`);
+  pokeLocalObsidianPull();
 }
 
 // --- full-article clip ---------------------------------------------------
@@ -240,4 +265,5 @@ export async function exportFullArticle(
     body: renderFullArticleMarkdown(meta, html, highlights),
   });
   if (!res.ok) throw new Error(`Obsidian save failed: HTTP ${res.status}`);
+  pokeLocalObsidianPull();
 }
