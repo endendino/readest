@@ -1191,27 +1191,32 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           {showWpmDropdown && !ttsDriven && (
             <>
               <Overlay onDismiss={() => setShowWpmDropdown(false)} />
+              {/* Speed picker: a slider over the controller's WPM range (the
+                  option list doubles as its bounds), live-applied on drag. */}
               <div
-                className='absolute end-0 top-full z-[100] mt-1.5 max-h-64 min-w-[7rem] overflow-y-auto rounded-2xl border border-gray-500/20 shadow-2xl'
+                className='absolute end-0 top-full z-[100] mt-1.5 w-60 rounded-2xl border border-gray-500/20 p-4 shadow-2xl'
                 style={{ backgroundColor: bgColor }}
               >
-                {controller.getWpmOptions().map((wpm) => (
-                  <button
-                    key={wpm}
-                    className={clsx(
-                      'flex w-full items-center justify-between gap-3 whitespace-nowrap rounded-md border-none bg-transparent px-4 py-1.5 text-sm tabular-nums transition-colors first:rounded-t-2xl last:rounded-b-2xl hover:bg-gray-500/15',
-                      state.wpm === wpm &&
-                        'bg-[color-mix(in_srgb,var(--rsvp-accent)_15%,transparent)] font-semibold',
-                    )}
-                    onClick={() => {
-                      controller.setWpm(wpm);
-                      setShowWpmDropdown(false);
-                    }}
-                  >
-                    <span>{wpm}</span>
-                    <span className='text-xs opacity-40'>WPM</span>
-                  </button>
-                ))}
+                <div className='mb-2 flex items-baseline justify-between'>
+                  <span className='text-lg font-semibold tabular-nums'>{state.wpm}</span>
+                  <span className='text-xs opacity-50'>WPM</span>
+                </div>
+                <input
+                  type='range'
+                  data-testid='rsvp-wpm-slider'
+                  min={controller.getWpmOptions()[0]}
+                  max={controller.getWpmOptions().slice(-1)[0]}
+                  step={25}
+                  value={state.wpm}
+                  onChange={(e) => controller.setWpm(parseInt(e.target.value, 10))}
+                  className='w-full cursor-pointer'
+                  style={{ accentColor }}
+                  aria-label={_('Reading speed')}
+                />
+                <div className='mt-1 flex justify-between text-[10px] tabular-nums opacity-40'>
+                  <span>{controller.getWpmOptions()[0]}</span>
+                  <span>{controller.getWpmOptions().slice(-1)[0]}</span>
+                </div>
               </div>
             </>
           )}

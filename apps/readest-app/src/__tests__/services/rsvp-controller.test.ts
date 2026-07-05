@@ -1194,17 +1194,19 @@ describe('RSVPController', () => {
     });
   });
 
-  describe('WPM cap (user maximum 600)', () => {
-    test('getWpmOptions tops out at 600 and setWpm clamps to it', () => {
+  describe('WPM bounds (user range 250–550)', () => {
+    test('getWpmOptions spans 250–550 and setWpm clamps to both ends', () => {
       const view = createMockView(0, [makeDoc('one two')]);
       const controller = new RSVPController(view, 'test-book-abc123');
 
       const options = controller.getWpmOptions();
-      expect(options[0]).toBe(100);
-      expect(options[options.length - 1]).toBe(600);
+      expect(options[0]).toBe(250);
+      expect(options[options.length - 1]).toBe(550);
 
       controller.setWpm(1000);
-      expect(controller.currentState.wpm).toBe(600);
+      expect(controller.currentState.wpm).toBe(550);
+      controller.setWpm(100);
+      expect(controller.currentState.wpm).toBe(250);
     });
   });
 });

@@ -18,8 +18,8 @@ import { isRangeLike } from '@/utils/range';
 // 450: the user's preferred starting pace (the calibration ramp was removed —
 // it re-offered itself per book, which for feed articles meant every article).
 const DEFAULT_WPM = 450;
-const MIN_WPM = 100;
-const MAX_WPM = 600;
+const MIN_WPM = 250;
+const MAX_WPM = 550;
 const WPM_STEP = 50;
 const DEFAULT_PUNCTUATION_PAUSE_MS = 100;
 // Extra dwell at a paragraph start — the largest semantic pause in text — as a
@@ -328,9 +328,9 @@ export class RSVPController extends EventTarget {
     if (stored) {
       const parsed = parseInt(stored, 10);
       if (!isNaN(parsed)) {
-        // Clamp rather than reject: a value saved before the cap was lowered
-        // (e.g. 800) should load at the 600 ceiling, not silently reset to the
-        // default (review integration finding #6).
+        // Clamp rather than reject: a value saved before the bounds changed
+        // (e.g. 600 from the old cap) should load at the current ceiling, not
+        // silently reset to the default (review integration finding #6).
         return Math.max(MIN_WPM, Math.min(MAX_WPM, parsed));
       }
     }
