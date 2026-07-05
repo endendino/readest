@@ -910,9 +910,6 @@ describe('RSVPOverlay — symmetric tap zones (#C6)', () => {
 });
 
 describe('RSVPOverlay — Escape closes topmost layer first (#C8)', () => {
-  // The calibration ramp shows by default (no prior calibration); mark it done
-  // so Escape isn't consumed closing calibration.
-  beforeAll(() => localStorage.setItem('readest_rsvp_calibrated_testbook', '1'));
   afterEach(() => cleanup());
 
   test('Escape closes an open chapter dropdown instead of the whole session', () => {

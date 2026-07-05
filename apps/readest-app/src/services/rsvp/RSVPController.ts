@@ -15,7 +15,9 @@ import { compare as compareCFI } from 'foliate-js/epubcfi.js';
 import { XCFI } from '@/utils/xcfi';
 import { isRangeLike } from '@/utils/range';
 
-const DEFAULT_WPM = 300;
+// 450: the user's preferred starting pace (the calibration ramp was removed —
+// it re-offered itself per book, which for feed articles meant every article).
+const DEFAULT_WPM = 450;
 const MIN_WPM = 100;
 const MAX_WPM = 600;
 const WPM_STEP = 50;
