@@ -206,7 +206,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const [countdown, setCountdown] = useState<number | null>(controller.currentCountdown);
   const [showChapterDropdown, setShowChapterDropdown] = useState(false);
   const chapterDropdownRef = useRef<HTMLDivElement>(null);
-  const [showWpmDropdown, setShowWpmDropdown] = useState(false);
   const [showRateDropdown, setShowRateDropdown] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(() => {
@@ -364,7 +363,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           // pending lookup / the settings row. Only when nothing is layered on
           // top does Escape close the whole session.
           if (showChapterDropdown) setShowChapterDropdown(false);
-          else if (showWpmDropdown) setShowWpmDropdown(false);
           else if (showRateDropdown) setShowRateDropdown(false);
           else if (lookup) setLookup(null);
           else if (showSettings) setShowSettings(false);
@@ -421,7 +419,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     dict,
     isSettingsDialogOpen,
     showChapterDropdown,
-    showWpmDropdown,
     showRateDropdown,
     lookup,
     showSettings,
@@ -1169,56 +1166,27 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
               </svg>
             </button>
           ) : (
-            <button
-              className='flex items-center gap-1 rounded-full border border-gray-500/20 bg-gray-500/10 px-3 py-1.5 text-sm tabular-nums transition-colors hover:bg-gray-500/20'
-              onClick={() => setShowWpmDropdown(!showWpmDropdown)}
-              aria-label={_('Select reading speed')}
-              title={_('Select reading speed')}
+            // Speed control: an always-visible slider over the controller's WPM
+            // range (the option list doubles as its bounds), live-applied on
+            // drag — no popover to open first.
+            <div
+              className='flex items-center gap-2 rounded-full border border-gray-500/20 bg-gray-500/10 px-3 py-1.5'
+              title={_('Reading speed')}
             >
-              <span className='font-semibold'>{state.wpm}</span>
-              <span className='ms-0.5 text-xs opacity-50'>WPM</span>
-              <svg
-                viewBox='0 0 24 24'
-                fill='none'
-                stroke='currentColor'
-                strokeWidth='2.5'
-                className='ms-0.5 h-3 w-3 shrink-0 opacity-50'
-              >
-                <path d='M6 9l6 6 6-6' />
-              </svg>
-            </button>
-          )}
-          {showWpmDropdown && !ttsDriven && (
-            <>
-              <Overlay onDismiss={() => setShowWpmDropdown(false)} />
-              {/* Speed picker: a slider over the controller's WPM range (the
-                  option list doubles as its bounds), live-applied on drag. */}
-              <div
-                className='absolute end-0 top-full z-[100] mt-1.5 w-60 rounded-2xl border border-gray-500/20 p-4 shadow-2xl'
-                style={{ backgroundColor: bgColor }}
-              >
-                <div className='mb-2 flex items-baseline justify-between'>
-                  <span className='text-lg font-semibold tabular-nums'>{state.wpm}</span>
-                  <span className='text-xs opacity-50'>WPM</span>
-                </div>
-                <input
-                  type='range'
-                  data-testid='rsvp-wpm-slider'
-                  min={controller.getWpmOptions()[0]}
-                  max={controller.getWpmOptions().slice(-1)[0]}
-                  step={25}
-                  value={state.wpm}
-                  onChange={(e) => controller.setWpm(parseInt(e.target.value, 10))}
-                  className='w-full cursor-pointer'
-                  style={{ accentColor }}
-                  aria-label={_('Reading speed')}
-                />
-                <div className='mt-1 flex justify-between text-[10px] tabular-nums opacity-40'>
-                  <span>{controller.getWpmOptions()[0]}</span>
-                  <span>{controller.getWpmOptions().slice(-1)[0]}</span>
-                </div>
-              </div>
-            </>
+              <span className='min-w-[2.2em] text-sm font-semibold tabular-nums'>{state.wpm}</span>
+              <input
+                type='range'
+                data-testid='rsvp-wpm-slider'
+                min={controller.getWpmOptions()[0]}
+                max={controller.getWpmOptions().slice(-1)[0]}
+                step={25}
+                value={state.wpm}
+                onChange={(e) => controller.setWpm(parseInt(e.target.value, 10))}
+                className='w-24 cursor-pointer md:w-40'
+                style={{ accentColor }}
+                aria-label={_('Reading speed')}
+              />
+            </div>
           )}
           {showRateDropdown && ttsDriven && (
             <>
