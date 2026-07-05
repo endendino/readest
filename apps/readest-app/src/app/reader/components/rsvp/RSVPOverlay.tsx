@@ -278,12 +278,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const touchStartTime = useRef(0);
   const holdSlowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdSlowActive = useRef(false);
-  const isDraggingProgressBar = useRef(false);
-  const wasPlayingBeforeDrag = useRef(false);
-  // rAF-coalesced progress scrub (#E2).
-  const seekRaf = useRef<number | null>(null);
-  const pendingSeekPct = useRef<number | null>(null);
-  const [isProgressBarDragging, setIsProgressBarDragging] = useState(false);
   const SWIPE_THRESHOLD = 50;
   const TAP_THRESHOLD = 10;
 
@@ -962,64 +956,6 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const hasMoreBefore = contextWindow.start > 0;
   const hasMoreAfter = contextWindow.end < state.words.length;
 
-  const getProgressBarPercentage = (clientX: number, target: HTMLElement): number => {
-    const rect = target.getBoundingClientRect();
-    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
-    const ratio = rect.width > 0 ? x / rect.width : 0;
-    // In RTL the bar starts at the right edge, so a physical-left offset maps to
-    // the far (later) end of the chapter — invert the ratio.
-    return (isRTLDoc ? 1 - ratio : ratio) * 100;
-  };
-
-  const handleProgressBarPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId);
-    isDraggingProgressBar.current = true;
-    setIsProgressBarDragging(true);
-    wasPlayingBeforeDrag.current = state.playing;
-    if (state.playing) controller.pause();
-    controller.seekToPosition(getProgressBarPercentage(event.clientX, event.currentTarget));
-  };
-
-  const handleProgressBarPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingProgressBar.current) return;
-    // Throttle the scrub to one seek per animation frame (#E2): each seek emits
-    // a full state change + re-render + scrollIntoView, so an unthrottled
-    // pointermove stream janks on mobile drags. Coalesce to the latest position.
-    const pct = getProgressBarPercentage(event.clientX, event.currentTarget);
-    pendingSeekPct.current = pct;
-    if (seekRaf.current === null) {
-      seekRaf.current = requestAnimationFrame(() => {
-        seekRaf.current = null;
-        if (pendingSeekPct.current !== null) {
-          controller.seekToPosition(pendingSeekPct.current);
-          pendingSeekPct.current = null;
-        }
-      });
-    }
-  };
-
-  const handleProgressBarPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingProgressBar.current) return;
-    isDraggingProgressBar.current = false;
-    // Flush any coalesced seek so the final position is exact.
-    if (seekRaf.current !== null) {
-      cancelAnimationFrame(seekRaf.current);
-      seekRaf.current = null;
-    }
-    if (pendingSeekPct.current !== null) {
-      controller.seekToPosition(pendingSeekPct.current);
-      pendingSeekPct.current = null;
-    }
-    setIsProgressBarDragging(false);
-    // pointercancel can fire after the browser has already released the
-    // capture itself (e.g. multitouch, app backgrounding), so calling
-    // releasePointerCapture unconditionally would throw NotFoundError.
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    if (wasPlayingBeforeDrag.current) setTimeout(() => controller.resume(), 50);
-  };
-
   const handleChapterSelect = (href: string) => {
     setShowChapterDropdown(false);
     controller.pause();
@@ -1096,18 +1032,35 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         {/* Chapter selector */}
         <div className='relative min-w-0 flex-1'>
           <button
-            className='flex w-full items-center gap-1.5 rounded-full border border-gray-500/20 bg-gray-500/10 px-3 py-1.5 text-sm transition-colors hover:bg-gray-500/20'
+            className='relative flex w-full items-center gap-1.5 overflow-hidden rounded-full border border-gray-500/20 bg-gray-500/10 px-3 py-1.5 text-sm transition-colors hover:bg-gray-500/20'
             onClick={() => setShowChapterDropdown(!showChapterDropdown)}
           >
-            <span className='min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-start'>
+            {/* Reading progress doubles as the title bar's background: an
+                accent-tinted fill growing from the inline-start edge (start-0
+                flips for RTL). Replaces the old footer progress bar. */}
+            <span
+              aria-hidden
+              data-testid='rsvp-title-progress-fill'
+              className='absolute inset-y-0 start-0 transition-[width] duration-300'
+              style={{
+                width: `${state.progress}%`,
+                backgroundColor: 'color-mix(in srgb, var(--rsvp-accent) 22%, transparent)',
+              }}
+            />
+            <span className='relative min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-start'>
               {getCurrentChapterLabel()}
             </span>
+            {getTimeRemaining() && (
+              <span className='relative shrink-0 whitespace-nowrap text-xs tabular-nums opacity-60'>
+                {_('{{time}} left', { time: getTimeRemaining() })}
+              </span>
+            )}
             <svg
               viewBox='0 0 24 24'
               fill='none'
               stroke='currentColor'
               strokeWidth='2.5'
-              className='h-3.5 w-3.5 shrink-0 opacity-50'
+              className='relative h-3.5 w-3.5 shrink-0 opacity-50'
             >
               <path d='M6 9l6 6 6-6' />
             </svg>
@@ -1371,6 +1324,95 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* Context panel — an ABSOLUTE overlay directly beneath the focal
+                  word (out of flow, like the countdown above it, #C5), so its
+                  reveal on pause never shifts the word. Shown only while
+                  PAUSED: during playback it's motion in the periphery that
+                  competes with the focal word; on pause it's the
+                  re-orientation aid. The positioning wrapper is
+                  pointer-events-none so clicks in its gutters fall through to
+                  the overlay root; the panel itself is `rsvp-controls`, so its
+                  own gestures (collapse header tap, word taps, text selection)
+                  are never hijacked by the tap-zone / slow-mo hold /
+                  click-to-pause handlers (#C2). */}
+              {!transportPlaying && (
+                <div className='pointer-events-none absolute left-0 right-0 top-full z-20 mt-3 flex justify-center px-3 md:mt-5'>
+                  <div
+                    className='rsvp-controls pointer-events-auto w-full overflow-hidden rounded-lg border border-gray-500/20 md:max-w-2xl md:rounded-xl'
+                    style={{
+                      backgroundColor: `color-mix(in srgb, ${bgColor} 92%, var(--rsvp-fg))`,
+                    }}
+                  >
+                    <button
+                      className='flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide opacity-60 transition-opacity hover:opacity-80 md:px-4 md:py-3'
+                      onClick={toggleContext}
+                      aria-expanded={!contextCollapsed}
+                      aria-label={contextCollapsed ? _('Show context') : _('Hide context')}
+                    >
+                      <svg
+                        width='14'
+                        height='14'
+                        viewBox='0 0 24 24'
+                        fill='none'
+                        stroke='currentColor'
+                        strokeWidth='2'
+                        className='md:h-4 md:w-4'
+                      >
+                        <path d='M4 6h16M4 12h16M4 18h10' />
+                      </svg>
+                      <span className='flex-1 text-start'>{_('Context')}</span>
+                      <IoChevronDown
+                        className={clsx(
+                          'h-3.5 w-3.5 transition-transform duration-200',
+                          !contextCollapsed && 'rotate-180',
+                        )}
+                      />
+                    </button>
+                    {!contextCollapsed && (
+                      <div
+                        className='px-3 pb-3 md:px-4 md:pb-4'
+                        onTouchStart={(e) => e.stopPropagation()}
+                        onTouchEnd={(e) => e.stopPropagation()}
+                      >
+                        <div
+                          ref={contextPanelRef}
+                          data-testid='rsvp-context-panel'
+                          dir={isRTLDoc ? 'rtl' : 'ltr'}
+                          className={clsx(
+                            // 4lh = exactly four lines of THIS element's computed
+                            // line-height, robust across breakpoints (md:text-lg
+                            // swaps both font-size and line-height).
+                            'max-h-[4lh] select-text overflow-y-auto text-base leading-loose md:text-lg',
+                            isRTLDoc ? 'text-right' : 'text-left',
+                          )}
+                          style={{ fontFamily }}
+                          onClick={handleContextClick}
+                          onMouseUp={handleContextSelection}
+                          onTouchEnd={handleContextSelection}
+                        >
+                          {hasMoreBefore && <span className='opacity-30'>… </span>}
+                          {state.words.slice(contextWindow.start, contextWindow.end).map((w, i) => {
+                            const wordIndex = contextWindow.start + i;
+                            const isCurrent = wordIndex === state.currentIndex;
+                            return (
+                              <ContextWord
+                                key={wordIndex}
+                                text={w.text}
+                                wordIndex={wordIndex}
+                                isCurrent={isCurrent}
+                                currentRef={isCurrent ? contextWordRef : undefined}
+                                orpColor={isCurrent ? effectiveOrpColor : undefined}
+                              />
+                            );
+                          })}
+                          {hasMoreAfter && <span className='opacity-30'>…</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bottom guide line */}
@@ -1379,163 +1421,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
         </div>
       </div>
 
-      {/* Context panel — beneath the focal display, collapsible. Shown only
-          while PAUSED: during playback it's motion in the periphery that
-          competes with the focal word; on pause it's the re-orientation aid.
-          Constrained to a comfortable reading measure on desktop (max-w-2xl,
-          centred) instead of screen-wide. Marked `rsvp-controls` so its own
-          gestures (collapse header tap, word taps, text selection) are never
-          hijacked by the overlay's tap-zone / slow-mo hold / click-to-pause
-          handlers (#C2). */}
-      {!transportPlaying && (
-        <div className='rsvp-controls mx-3 overflow-hidden rounded-lg border border-gray-500/20 bg-gray-500/10 md:mx-auto md:w-full md:max-w-2xl md:rounded-xl'>
-        <button
-          className='flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide opacity-60 transition-opacity hover:opacity-80 md:px-4 md:py-3'
-          onClick={toggleContext}
-          aria-expanded={!contextCollapsed}
-          aria-label={contextCollapsed ? _('Show context') : _('Hide context')}
-        >
-          <svg
-            width='14'
-            height='14'
-            viewBox='0 0 24 24'
-            fill='none'
-            stroke='currentColor'
-            strokeWidth='2'
-            className='md:h-4 md:w-4'
-          >
-            <path d='M4 6h16M4 12h16M4 18h10' />
-          </svg>
-          <span className='flex-1 text-start'>{_('Context')}</span>
-          <IoChevronDown
-            className={clsx(
-              'h-3.5 w-3.5 transition-transform duration-200',
-              !contextCollapsed && 'rotate-180',
-            )}
-          />
-        </button>
-        {!contextCollapsed && (
-          <div
-            className='px-3 pb-3 md:px-4 md:pb-4'
-            onTouchStart={(e) => e.stopPropagation()}
-            onTouchEnd={(e) => e.stopPropagation()}
-          >
-            <div
-              ref={contextPanelRef}
-              data-testid='rsvp-context-panel'
-              dir={isRTLDoc ? 'rtl' : 'ltr'}
-              className={clsx(
-                // 4lh = exactly four lines of THIS element's computed
-                // line-height, robust across breakpoints (md:text-lg swaps
-                // both font-size and line-height).
-                'max-h-[4lh] select-text overflow-y-auto text-base leading-loose md:text-lg',
-                isRTLDoc ? 'text-right' : 'text-left',
-              )}
-              style={{ fontFamily }}
-              onClick={handleContextClick}
-              onMouseUp={handleContextSelection}
-              onTouchEnd={handleContextSelection}
-            >
-              {hasMoreBefore && <span className='opacity-30'>… </span>}
-              {state.words.slice(contextWindow.start, contextWindow.end).map((w, i) => {
-                const wordIndex = contextWindow.start + i;
-                const isCurrent = wordIndex === state.currentIndex;
-                return (
-                  <ContextWord
-                    key={wordIndex}
-                    text={w.text}
-                    wordIndex={wordIndex}
-                    isCurrent={isCurrent}
-                    currentRef={isCurrent ? contextWordRef : undefined}
-                    orpColor={isCurrent ? effectiveOrpColor : undefined}
-                  />
-                );
-              })}
-              {hasMoreAfter && <span className='opacity-30'>…</span>}
-            </div>
-          </div>
-        )}
-        </div>
-      )}
-
-      {/* Footer */}
+      {/* Footer — transport only; chapter progress lives in the header title
+          bar (fill + ETA), and the old drag-to-seek bar is gone. Seeking:
+          tap zones / Shift+arrows / context-word clicks / chapter picker. */}
       <div className='rsvp-controls shrink-0 px-3 pb-6 pt-3 md:px-4 md:pb-8 md:pt-4'>
-        {/* Progress section */}
-        <div className='mb-3 flex flex-col gap-1.5 md:mb-4 md:gap-2'>
-          <div className='flex flex-col gap-1 text-xs sm:flex-row sm:items-center sm:justify-between'>
-            <span className='font-semibold uppercase tracking-wide opacity-70'>
-              {_('Chapter Progress')}
-            </span>
-            <span className='tabular-nums opacity-60'>
-              {(state.currentIndex + 1).toLocaleString()} / {state.words.length.toLocaleString()}{' '}
-              {_('words')}
-              {getTimeRemaining() && (
-                <span className='opacity-80'>
-                  {' '}
-                  · {_('{{time}} left', { time: getTimeRemaining() })}
-                </span>
-              )}
-            </span>
-          </div>
-          <div
-            role='slider'
-            tabIndex={0}
-            aria-label={_('Reading progress')}
-            aria-valuenow={Math.round(state.progress)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            className='relative h-2 cursor-pointer overflow-visible rounded bg-gray-500/30'
-            // touch-action: none keeps mobile browsers from claiming the
-            // gesture for scroll/pan, which would fire pointercancel and
-            // break the drag-to-seek pointer capture mid-gesture.
-            style={{ touchAction: 'none' }}
-            onPointerDown={handleProgressBarPointerDown}
-            onPointerMove={handleProgressBarPointerMove}
-            onPointerUp={handleProgressBarPointerUp}
-            onPointerCancel={handleProgressBarPointerUp}
-            onKeyDown={(e) => {
-              // Only claim the keys the slider actually handles (#D1): arrows
-              // seek; Tab (and everything else) must pass through so focus can
-              // leave the slider — an unconditional preventDefault trapped focus.
-              if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                e.stopPropagation();
-                // In RTL, leftward is forward through the chapter.
-                if (isRTLDoc) controller.skipForward();
-                else controller.skipBackward();
-              } else if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                e.stopPropagation();
-                if (isRTLDoc) controller.skipBackward();
-                else controller.skipForward();
-              }
-            }}
-            title={_('Drag to seek')}
-          >
-            <div
-              // `start-0` anchors the fill to the inline-start edge (right in
-              // RTL), so it grows from the chapter's beginning in either dir.
-              className={`absolute start-0 top-0 h-full rounded ${isProgressBarDragging ? '' : 'transition-[width] duration-100'}`}
-              style={{ width: `${state.progress}%`, backgroundColor: accentColor }}
-            />
-            <div
-              // Transforms are physical (not flipped by `dir`), so the handle
-              // anchors to the inline-start edge and centres itself with the
-              // matching-sign translate for the active direction.
-              className={clsx(
-                'absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full shadow',
-                isRTLDoc ? 'translate-x-1/2' : '-translate-x-1/2',
-                !isProgressBarDragging && (isRTLDoc ? 'transition-[right]' : 'transition-[left]'),
-                !isProgressBarDragging && 'duration-100',
-              )}
-              style={{
-                ...(isRTLDoc ? { right: `${state.progress}%` } : { left: `${state.progress}%` }),
-                backgroundColor: accentColor,
-              }}
-            />
-          </div>
-        </div>
-
         {/* Playback controls. The audio/settings cluster is `absolute end-0`;
             reserve symmetric horizontal room (#C10) so the centered transport
             (esp. the `+` button) can't slip under the cluster on narrow phones

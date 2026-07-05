@@ -216,30 +216,8 @@ describe('RSVPOverlay — reading font', () => {
   });
 });
 
-describe('RSVPOverlay — progress bar drag on mobile', () => {
+describe('RSVPOverlay — footer gestures', () => {
   afterEach(() => cleanup());
-
-  test('horizontal drag starting on the progress bar does not trigger a speed swipe', () => {
-    const words = Array.from({ length: 100 }, (_, i) => ({
-      text: `w${i}`,
-      orpIndex: 0,
-      pauseMultiplier: 1,
-    }));
-    const state = buildState({ words, currentIndex: 10 });
-
-    const { container, controller } = renderOverlay(state);
-    const slider = container.querySelector('[role="slider"]') as HTMLElement;
-    expect(slider).not.toBeNull();
-
-    // Simulate a horizontal touch drag long enough to clear SWIPE_THRESHOLD (50px).
-    fireEvent.touchStart(slider, { touches: [{ clientX: 50, clientY: 400 }] });
-    fireEvent.touchEnd(slider, {
-      changedTouches: [{ clientX: 200, clientY: 400 }],
-    });
-
-    expect(controller.increaseSpeed).not.toHaveBeenCalled();
-    expect(controller.decreaseSpeed).not.toHaveBeenCalled();
-  });
 
   test('horizontal drag starting on a footer button does not trigger a speed swipe', () => {
     const state = buildState({
@@ -260,15 +238,42 @@ describe('RSVPOverlay — progress bar drag on mobile', () => {
     expect(controller.decreaseSpeed).not.toHaveBeenCalled();
   });
 
-  test('progress bar uses touch-action: none so pointer capture survives on mobile', () => {
-    const state = buildState({
-      words: [{ text: 'a', orpIndex: 0, pauseMultiplier: 1 }],
-      currentIndex: 0,
+});
+
+describe('RSVPOverlay — title-bar progress (replaces the footer bar)', () => {
+  afterEach(() => cleanup());
+
+  const stateAt = (progress: number) =>
+    buildState({
+      words: Array.from({ length: 100 }, (_, i) => ({
+        text: `w${i}`,
+        orpIndex: 0,
+        pauseMultiplier: 1,
+      })),
+      currentIndex: 40,
+      progress,
     });
-    const { container } = renderOverlay(state);
-    const slider = container.querySelector('[role="slider"]') as HTMLElement;
-    expect(slider).not.toBeNull();
-    expect(slider.style.touchAction).toBe('none');
+
+  test('the header title carries an accent fill whose width tracks progress', () => {
+    const { container } = renderOverlay(stateAt(40));
+    const fill = container.querySelector('[data-testid="rsvp-title-progress-fill"]') as HTMLElement;
+    expect(fill).not.toBeNull();
+    expect(fill.style.width).toBe('40%');
+    expect(fill.closest('.rsvp-header')).not.toBeNull();
+  });
+
+  test('the old footer progress bar and word count are gone', () => {
+    const { container } = renderOverlay(stateAt(40));
+    expect(container.querySelector('[role="slider"]')).toBeNull();
+    expect(container.textContent).not.toContain('Chapter Progress');
+    expect(container.textContent).not.toContain('/ 100');
+  });
+
+  test('the ETA renders in the title bar', () => {
+    const { container } = renderOverlay(stateAt(40));
+    const title = container.querySelector('.rsvp-header') as HTMLElement;
+    // 60 words left at default WPM — getTimeRemaining yields a "… left" label.
+    expect(title.textContent).toMatch(/left/);
   });
 });
 
@@ -481,34 +486,6 @@ describe('RSVPOverlay — RTL seek gestures mirror direction', () => {
     Array.from({ length: 50 }, (_, i) => ({ text: `מ${i}`, orpIndex: 0, pauseMultiplier: 1 }));
   const latinWords = () =>
     Array.from({ length: 50 }, (_, i) => ({ text: `w${i}`, orpIndex: 0, pauseMultiplier: 1 }));
-
-  test('RTL: ArrowLeft on the progress slider seeks forward, ArrowRight seeks back', () => {
-    const { container, controller } = renderOverlay(buildState({ words: hebrewWords() }));
-    const slider = container.querySelector('[role="slider"]') as HTMLElement;
-    // The overlay's capture-phase handler only defers arrows while the slider is
-    // focused (#D1); focus it so the slider's own onKeyDown runs.
-    slider.focus();
-
-    fireEvent.keyDown(slider, { key: 'ArrowLeft' });
-    expect(controller.skipForward).toHaveBeenCalledTimes(1);
-    expect(controller.skipBackward).not.toHaveBeenCalled();
-
-    fireEvent.keyDown(slider, { key: 'ArrowRight' });
-    expect(controller.skipBackward).toHaveBeenCalledTimes(1);
-  });
-
-  test('LTR: ArrowLeft seeks back, ArrowRight seeks forward (unchanged)', () => {
-    const { container, controller } = renderOverlay(buildState({ words: latinWords() }));
-    const slider = container.querySelector('[role="slider"]') as HTMLElement;
-    slider.focus();
-
-    fireEvent.keyDown(slider, { key: 'ArrowLeft' });
-    expect(controller.skipBackward).toHaveBeenCalledTimes(1);
-    expect(controller.skipForward).not.toHaveBeenCalled();
-
-    fireEvent.keyDown(slider, { key: 'ArrowRight' });
-    expect(controller.skipForward).toHaveBeenCalledTimes(1);
-  });
 
   test('RTL: tapping the left quarter skips forward (edges swap)', () => {
     const { container, controller } = renderOverlay(buildState({ words: hebrewWords() }));
@@ -851,37 +828,6 @@ describe('RSVPOverlay — context panel does not toggle playback (#C2)', () => {
   });
 });
 
-describe('RSVPOverlay — progress slider keyboard (#D1)', () => {
-  afterEach(() => cleanup());
-
-  const sliderState = () =>
-    buildState({
-      words: Array.from({ length: 10 }, (_, i) => ({
-        text: `w${i}`,
-        orpIndex: 0,
-        pauseMultiplier: 1,
-      })),
-      currentIndex: 5,
-    });
-
-  test("the slider's own onKeyDown ignores Tab (no seek), so it is not a key trap", () => {
-    const { container, controller } = renderOverlay(sliderState());
-    const slider = container.querySelector('[role="slider"]') as HTMLElement;
-    // The slider handler previously preventDefaulted *every* key (incl. Tab);
-    // now it only claims arrows. Tab must not be treated as a seek key.
-    fireEvent.keyDown(slider, { key: 'Tab' });
-    expect(controller.skipForward).not.toHaveBeenCalled();
-    expect(controller.skipBackward).not.toHaveBeenCalled();
-  });
-
-  test('ArrowRight on the slider seeks forward and is handled', () => {
-    const { container, controller } = renderOverlay(sliderState());
-    const slider = container.querySelector('[role="slider"]') as HTMLElement;
-    slider.focus();
-    fireEvent.keyDown(slider, { key: 'ArrowRight' });
-    expect(controller.skipForward).toHaveBeenCalled();
-  });
-});
 
 describe('RSVPOverlay — symmetric tap zones (#C6)', () => {
   afterEach(() => {
