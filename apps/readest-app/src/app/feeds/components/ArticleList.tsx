@@ -291,7 +291,7 @@ export const ArticleList = () => {
 
   return (
     <div
-      className='divide-base-200 mx-auto max-w-[500px] divide-y text-[17px] leading-[1.8]'
+      className='divide-base-200 mx-auto max-w-[600px] divide-y text-[16px] leading-[1.5]'
       style={{ fontFamily: "'Open Sans', sans-serif" }}
     >
       {articles.map((a) => {
@@ -340,7 +340,7 @@ export const ArticleList = () => {
               </div>
               {expanded && (
                 <div className='px-4 pb-3'>
-                  <p dir={dir} className='text-base-content/80'>
+                  <p dir={dir} className='text-base-content/80 text-[15px]'>
                     {quickViewText(a)}
                   </p>
                   {summarizing.has(a.id) && (
@@ -358,7 +358,7 @@ export const ArticleList = () => {
                         <MdAutoAwesome className='h-3.5 w-3.5' />
                         {_('AI summary')}
                       </span>
-                      <p dir={dir} className='text-base-content/80'>
+                      <p dir={dir} className='text-base-content/80 text-[15px]'>
                         {summaries[a.id]}
                       </p>
                     </div>
