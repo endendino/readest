@@ -290,7 +290,10 @@ export const ArticleList = () => {
   }
 
   return (
-    <div className='divide-base-200 divide-y'>
+    <div
+      className='divide-base-200 mx-auto max-w-[500px] divide-y text-[17px] leading-[1.8]'
+      style={{ fontFamily: "'Open Sans', sans-serif" }}
+    >
       {articles.map((a) => {
         const expanded = expandedId === a.id;
         const wc = wordCount(a);
@@ -337,7 +340,7 @@ export const ArticleList = () => {
               </div>
               {expanded && (
                 <div className='px-4 pb-3'>
-                  <p dir={dir} className='text-base-content/80 text-sm leading-relaxed'>
+                  <p dir={dir} className='text-base-content/80'>
                     {quickViewText(a)}
                   </p>
                   {summarizing.has(a.id) && (
@@ -355,7 +358,7 @@ export const ArticleList = () => {
                         <MdAutoAwesome className='h-3.5 w-3.5' />
                         {_('AI summary')}
                       </span>
-                      <p dir={dir} className='text-base-content/80 text-sm leading-relaxed'>
+                      <p dir={dir} className='text-base-content/80'>
                         {summaries[a.id]}
                       </p>
                     </div>
