@@ -34,6 +34,13 @@ h3 { font-size: 1.15em; }
 h1, h2, h3 { line-height: 1.3; }
 p { margin: 0.6em 0; }
 img { max-width: 100%; height: auto; }
+/* Feed masthead source line: centred logo + name, name vertically middled
+   against the (shrunk) logo. More specific than the base img rule so the
+   fixed height wins. */
+.rss-source { text-align: center; margin: 0.4em 0 0.2em; line-height: 1.3; }
+.rss-source .rss-logo { display: inline-block; vertical-align: middle;
+  height: 1.75em; width: auto; margin-inline-end: 0.4em; }
+.rss-source strong { vertical-align: middle; font-weight: 700; }
 figure { margin: 1em 0; }
 figcaption { font-size: 0.9em; color: #666; text-align: center; }
 blockquote { margin: 1em 1.5em; color: #444; border-left: 3px solid #ccc; padding-left: 1em; }

@@ -27,6 +27,33 @@ const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
+ * Strip a feed-injected "reading time" widget from the top of the content —
+ * e.g. ynet's "⏱ 2 דקות קריאה (במהירות: 1)" line. Matched only by a stopwatch
+ * emoji at the start of a block (or a bare stopwatch run followed by
+ * minutes/reading words), so real prose is never touched. We render our own
+ * neutral read-time in the byline instead.
+ */
+const stripReadingTimeWidget = (html: string): string =>
+  html
+    .replace(/<(p|div)\b[^>]*>\s*(?:<[^>]+>\s*)*[⏱⏲][\s\S]*?<\/\1>/giu, '')
+    .replace(/[⏱⏲][^<\n]*?(?:דקות|דק['׳]|minutes?|min read)[^<\n]*/giu, '');
+
+// Rough adult reading pace; good enough for a "N min read" estimate.
+const WORDS_PER_MINUTE = 200;
+
+/** Estimated reading time in whole minutes (min 1) from an HTML body. */
+const estimateReadMinutes = (html: string): number => {
+  const text = html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const words = text ? text.split(' ').length : 0;
+  return Math.max(1, Math.round(words / WORDS_PER_MINUTE));
+};
+
+const HEBREW_CHAR = /[֐-׿]/;
+
+/**
  * The visible article header rendered at the top of the content: source favicon
  * + source name, the headline (`<h1>`, also the TOC anchor), and a byline
  * (author · date). The cover image only shows in the library thumbnail, never in
@@ -34,15 +61,23 @@ const escapeHtml = (s: string) =>
  * `<img>` is bundled like any other article image (fetched via /api/img). Uses
  * only sanitize-allowed tags; `<body dir="auto">` handles RTL alignment.
  */
-function buildMasthead(article: FreshRSSArticle): string {
+function buildMasthead(article: FreshRSSArticle, readMinutes: number): string {
   const date = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString() : '';
+  // `rss-source` centres the row and vertically-middles the name against the
+  // logo; `rss-logo` shrinks the favicon (see buildEpub CSS).
   const logo = article.feedIconUrl
-    ? `<img src="${escapeHtml(article.feedIconUrl)}" alt="" /> `
+    ? `<img class="rss-logo" src="${escapeHtml(article.feedIconUrl)}" alt="" />`
     : '';
   const source = article.feedTitle ? `<strong>${escapeHtml(article.feedTitle)}</strong>` : '';
-  const sourceLine = logo || source ? `<p>${logo}${source}</p>` : '';
+  const sourceLine = logo || source ? `<p class="rss-source">${logo}${source}</p>` : '';
   const titleLine = `<h1>${escapeHtml(article.title || '(untitled)')}</h1>`;
-  const byline = [article.author, date]
+  // Estimated read time joins the byline. Hebrew feeds get a Hebrew label; the
+  // masthead is a plain string with no i18n context, so this is a light
+  // script sniff rather than a full translation.
+  const isHebrew = HEBREW_CHAR.test(article.title || '') || HEBREW_CHAR.test(article.feedTitle || '');
+  const readLabel =
+    readMinutes > 0 ? (isHebrew ? `${readMinutes} דקות קריאה` : `${readMinutes} min read`) : '';
+  const byline = [article.author, date, readLabel]
     .filter(Boolean)
     .map((s) => escapeHtml(s as string))
     .join(' · ');
@@ -63,8 +98,11 @@ function buildMasthead(article: FreshRSSArticle): string {
  * lead photo.
  */
 export async function articleToFile(article: FreshRSSArticle): Promise<File> {
-  const rawBody = article.contentHtml?.trim() || `<p>${escapeHtml(article.title || '')}</p>`;
-  const body = buildMasthead(article) + rawBody;
+  const rawBody = stripReadingTimeWidget(
+    article.contentHtml?.trim() || `<p>${escapeHtml(article.title || '')}</p>`,
+  );
+  const readMinutes = estimateReadMinutes(rawBody);
+  const body = buildMasthead(article, readMinutes) + rawBody;
   // useProxy routes the cross-origin image fetches through /api/img on web; on
   // Tauri the bundler hits the network directly (no CORS), ignoring the flag.
   const bundle = await bundleAssets(body, article.url || '', { useProxy: true });
