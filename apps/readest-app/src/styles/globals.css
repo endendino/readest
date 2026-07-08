@@ -59,7 +59,8 @@
   font-weight: 300 800;
   font-style: normal;
   font-display: swap;
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
     U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
@@ -1027,4 +1028,40 @@ textarea:focus-within,
 .textarea:focus-within {
   outline: none !important;
   box-shadow: none !important;
+}
+
+/* TTS player scrubber: the track is painted by an inline three-stop gradient
+   (played / buffered / rest), so the native appearance must be blanked and
+   the element itself becomes the 4px track. Thumb inherits currentColor. */
+.tts-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+}
+.tts-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.tts-scrubber::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.tts-scrubber:disabled {
+  opacity: 0.5;
+}
+
+/* E-ink: the gradient's grey stops wash out, so a crisp 1px border marks the
+   track's extent while the solid currentColor fill and thumb carry the
+   position. Slightly taller so the fill stays visible inside the border. */
+[data-eink='true'] .tts-scrubber {
+  height: 6px;
+  border: 1px solid currentColor;
 }

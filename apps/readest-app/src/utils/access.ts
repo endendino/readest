@@ -60,19 +60,18 @@ export const isCloudSyncInPlan = (plan: UserPlan): boolean =>
  * Master switch for the third-party cloud-sync premium paywall.
  *
  * FORK PIN — keep this `false` permanently. This self-hosted build has no
- * Readest account/login at all, so every device reads as the 'free' plan; if
- * a future upstream release flips this back to `true`, WebDAV sync would
- * silently turn off on every device (useFileSync's isReady gate). When
- * rebasing onto a newer upstream, resolve any conflict here by KEEPING false.
- * (Upstream: temporarily off while the feature stabilises, to be re-gated to
- * {@link CLOUD_SYNC_PLANS}; every gate goes through {@link isCloudSyncAllowed}.)
+ * Readest account/login at all, so every device reads as the 'free' plan;
+ * upstream flipped this to `true` in v0.11.18 (paywall live, #4959), which
+ * would silently turn WebDAV sync off on every device here (useFileSync's
+ * isReady gate). When merging newer upstream, resolve any conflict here by
+ * KEEPING false. Every gate goes through {@link isCloudSyncAllowed}.
  */
 export const CLOUD_SYNC_REQUIRES_PREMIUM = false;
 
 /**
- * Whether third-party cloud sync is available for a plan. While
- * {@link CLOUD_SYNC_REQUIRES_PREMIUM} is off this is always true; once it is
- * re-enabled it falls back to the {@link isCloudSyncInPlan} paywall.
+ * Whether third-party cloud sync is available for a plan. Falls back to the
+ * {@link isCloudSyncInPlan} paywall while {@link CLOUD_SYNC_REQUIRES_PREMIUM}
+ * is on; flipping the switch off ungates every plan.
  */
 export const isCloudSyncAllowed = (plan: UserPlan): boolean =>
   !CLOUD_SYNC_REQUIRES_PREMIUM || isCloudSyncInPlan(plan);

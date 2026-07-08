@@ -230,7 +230,6 @@ describe('services/constants', () => {
       expect(typeof DEFAULT_SYSTEM_SETTINGS.alwaysOnTop).toBe('boolean');
       expect(typeof DEFAULT_SYSTEM_SETTINGS.openBookInNewWindow).toBe('boolean');
       expect(typeof DEFAULT_SYSTEM_SETTINGS.alwaysShowStatusBar).toBe('boolean');
-      expect(typeof DEFAULT_SYSTEM_SETTINGS.alwaysInForeground).toBe('boolean');
       expect(typeof DEFAULT_SYSTEM_SETTINGS.autoCheckUpdates).toBe('boolean');
       expect(typeof DEFAULT_SYSTEM_SETTINGS.screenWakeLock).toBe('boolean');
       expect(typeof DEFAULT_SYSTEM_SETTINGS.openLastBooks).toBe('boolean');
@@ -653,7 +652,6 @@ describe('services/constants', () => {
       expect(DEFAULT_TTS_CONFIG.ttsRate).toBeGreaterThan(0);
       expect(typeof DEFAULT_TTS_CONFIG.ttsVoice).toBe('string');
       expect(typeof DEFAULT_TTS_CONFIG.ttsLocation).toBe('string');
-      expect(typeof DEFAULT_TTS_CONFIG.showTTSBar).toBe('boolean');
       expect(typeof DEFAULT_TTS_CONFIG.ttsMediaMetadata).toBe('string');
     });
 
