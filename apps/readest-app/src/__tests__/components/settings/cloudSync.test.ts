@@ -170,9 +170,12 @@ describe('isCloudSyncInPlan', () => {
 });
 
 describe('isCloudSyncAllowed (premium paywall)', () => {
-  test('third-party cloud sync requires a paid plan', () => {
-    expect(CLOUD_SYNC_REQUIRES_PREMIUM).toBe(true);
-    expect(isCloudSyncAllowed('free')).toBe(false);
+  // FORK: the paywall is pinned OFF (utils/access.ts FORK PIN) — this
+  // self-hosted build has no login, so every plan must be allowed or WebDAV
+  // sync dies on every device. Upstream asserts the inverse since v0.11.18.
+  test('third-party cloud sync is ungated on the self-hosted fork', () => {
+    expect(CLOUD_SYNC_REQUIRES_PREMIUM).toBe(false);
+    expect(isCloudSyncAllowed('free')).toBe(true);
     expect(isCloudSyncAllowed('plus')).toBe(true);
     expect(isCloudSyncAllowed('pro')).toBe(true);
     expect(isCloudSyncAllowed('purchase')).toBe(true);

@@ -839,9 +839,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const handleRootClick = (event: React.MouseEvent) => {
     if (Date.now() - lastTouchEndAtRef.current < 700) return;
     const target = event.target as HTMLElement;
-    if (
-      target.closest('.rsvp-controls, .rsvp-header, button, a, input, select, [role="slider"]')
-    ) {
+    if (target.closest('.rsvp-controls, .rsvp-header, button, a, input, select, [role="slider"]')) {
       return;
     }
     // Inner dialogs (dictionary sheet, etc.) own their clicks — but the

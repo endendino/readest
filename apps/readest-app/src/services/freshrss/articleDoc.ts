@@ -74,7 +74,8 @@ function buildMasthead(article: FreshRSSArticle, readMinutes: number): string {
   // Estimated read time joins the byline. Hebrew feeds get a Hebrew label; the
   // masthead is a plain string with no i18n context, so this is a light
   // script sniff rather than a full translation.
-  const isHebrew = HEBREW_CHAR.test(article.title || '') || HEBREW_CHAR.test(article.feedTitle || '');
+  const isHebrew =
+    HEBREW_CHAR.test(article.title || '') || HEBREW_CHAR.test(article.feedTitle || '');
   const readLabel =
     readMinutes > 0 ? (isHebrew ? `${readMinutes} דקות קריאה` : `${readMinutes} min read`) : '';
   const byline = [article.author, date, readLabel]

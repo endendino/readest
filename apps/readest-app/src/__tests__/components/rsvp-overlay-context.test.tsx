@@ -237,7 +237,6 @@ describe('RSVPOverlay — footer gestures', () => {
     expect(controller.increaseSpeed).not.toHaveBeenCalled();
     expect(controller.decreaseSpeed).not.toHaveBeenCalled();
   });
-
 });
 
 describe('RSVPOverlay — title-bar progress (replaces the footer bar)', () => {
@@ -771,9 +770,7 @@ describe('RSVPOverlay — context panel only while paused + click-to-pause', () 
   });
 
   test('a mouse click while paused resumes', () => {
-    const { container, controller } = renderOverlay(
-      buildState({ words: words(), playing: false }),
-    );
+    const { container, controller } = renderOverlay(buildState({ words: words(), playing: false }));
     const root = container.querySelector('[data-testid="rsvp-overlay"]') as HTMLElement;
     fireEvent.click(root);
     expect(controller.togglePlayPause).toHaveBeenCalledTimes(1);
@@ -827,7 +824,6 @@ describe('RSVPOverlay — context panel does not toggle playback (#C2)', () => {
     expect(header.closest('.rsvp-controls')).not.toBeNull();
   });
 });
-
 
 describe('RSVPOverlay — symmetric tap zones (#C6)', () => {
   afterEach(() => {

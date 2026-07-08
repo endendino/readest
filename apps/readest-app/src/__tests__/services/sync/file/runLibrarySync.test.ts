@@ -200,23 +200,23 @@ describe('runActiveFileBookDownload', () => {
   });
 });
 
-// Paused means paused (#4959 contract): a free plan with a still-enabled
-// third-party provider (downgrade) must not sync — neither the library run
-// nor the per-book actions.
-describe('premium gating of the active provider', () => {
-  test('library sync is skipped for a free plan', async () => {
+// FORK: upstream's #4959 contract pauses free-plan third-party sync; this
+// self-hosted build pins the paywall OFF (utils/access.ts), so a 'free' plan
+// (the only plan a no-login install ever has) must sync normally.
+describe('premium gating of the active provider (fork: ungated)', () => {
+  test('library sync RUNS for a free plan', async () => {
     setCachedUserPlan('free');
     setProvider({ webdav: { enabled: true, deviceId: 'd1' } } as Partial<SystemSettings>);
-    expect(await runActiveFileLibrarySync(envConfig, translationFn)).toBeNull();
-    expect(syncLibrary).not.toHaveBeenCalled();
+    await runActiveFileLibrarySync(envConfig, translationFn);
+    expect(syncLibrary).toHaveBeenCalled();
   });
 
-  test('per-book upload and download are skipped for a free plan', async () => {
+  test('per-book upload and download RUN for a free plan', async () => {
     setCachedUserPlan('free');
     setProvider({ webdav: { enabled: true } } as Partial<SystemSettings>);
-    expect(await runActiveFileBookUpload(envConfig, makeBook('h1'))).toBe(false);
-    expect(await runActiveFileBookDownload(envConfig, makeBook('h1'))).toBe(false);
-    expect(pushBookFile).not.toHaveBeenCalled();
-    expect(downloadBookFile).not.toHaveBeenCalled();
+    await runActiveFileBookUpload(envConfig, makeBook('h1'));
+    await runActiveFileBookDownload(envConfig, makeBook('h1'));
+    expect(pushBookFile).toHaveBeenCalled();
+    expect(downloadBookFile).toHaveBeenCalled();
   });
 });
