@@ -445,6 +445,11 @@ export async function importBook(
       createdAt: existingBook ? existingBook.createdAt : Date.now(),
       uploadedAt: existingBook ? existingBook.uploadedAt : null,
       deletedAt: transient ? Date.now() : null,
+      // FORK: explicit marker so persistence/sync boundaries can exclude
+      // transient books outright (the born-tombstoned deletedAt above hides
+      // them from the shelf but still leaked rows into library.json / the
+      // cloud index — see the feed-article library-pollution incident).
+      ...(transient ? { transient: true } : {}),
       downloadedAt: Date.now(),
       updatedAt: Date.now(),
     };

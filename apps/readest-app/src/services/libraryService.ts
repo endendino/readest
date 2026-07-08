@@ -25,7 +25,11 @@ export async function loadLibraryBooks(
     await fs.createDir('', 'Books', true);
   }
 
-  const books = await safeLoadJSON<Book[]>(fs, libraryFilename, 'Books', []);
+  // FORK: transient rows on disk are a bug (saveLibraryBooks filters them);
+  // drop any that slipped through an older build so they can't resurface.
+  const books = (await safeLoadJSON<Book[]>(fs, libraryFilename, 'Books', [])).filter(
+    (b) => !b.transient,
+  );
 
   await processInBatches(books, COVER_CONCURRENCY, async (book) => {
     book.coverImageUrl = await generateCoverImageUrl(book);
@@ -40,8 +44,11 @@ export async function saveLibraryBooks(
   books: Book[],
   options?: SaveLibraryBooksOptions,
 ): Promise<void> {
+  // FORK: transient books (feed articles staged in Cache) exist only for the
+  // reader session — they must never be persisted to library.json, or they
+  // leak into the shelf and the cloud index (the 190-article pollution).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const incoming = books.map(({ coverImageUrl, ...rest }) => rest);
+  const incoming = books.filter((b) => !b.transient).map(({ coverImageUrl, ...rest }) => rest);
 
   if (options?.replace) {
     await safeSaveJSON(fs, getLibraryFilename(), 'Books', incoming);

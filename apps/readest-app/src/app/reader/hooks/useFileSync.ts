@@ -240,6 +240,10 @@ export const useFileSync = (bookKey: string) => {
     const config = getConfig(bookKey);
     const book = getBookData(bookKey)?.book;
     if (!config || !book || !engine) return;
+    // FORK: transient books (feed articles, born tombstoned) must never
+    // create Readest/books/<hash>/ residue on the remote — that residue is
+    // what the library drift-scan later re-adopts as phantom shelf entries.
+    if (book.transient || book.deletedAt) return;
 
     try {
       const deviceId = ensureDeviceId();
@@ -275,6 +279,10 @@ export const useFileSync = (bookKey: string) => {
 
     const book = getBookData(bookKey)?.book;
     if (!book || !engine) return;
+    // FORK: transient books (feed articles, born tombstoned) must never
+    // create Readest/books/<hash>/ residue on the remote — that residue is
+    // what the library drift-scan later re-adopts as phantom shelf entries.
+    if (book.transient || book.deletedAt) return;
 
     try {
       const result = await engine.pushBookFile(book);
@@ -306,6 +314,10 @@ export const useFileSync = (bookKey: string) => {
 
     const book = getBookData(bookKey)?.book;
     if (!book || !engine) return;
+    // FORK: transient books (feed articles, born tombstoned) must never
+    // create Readest/books/<hash>/ residue on the remote — that residue is
+    // what the library drift-scan later re-adopts as phantom shelf entries.
+    if (book.transient || book.deletedAt) return;
 
     try {
       await engine.pushBookCover(book);
@@ -329,6 +341,10 @@ export const useFileSync = (bookKey: string) => {
     const config = getConfig(bookKey);
     const book = getBookData(bookKey)?.book;
     if (!config || !book || !engine) return false;
+    // FORK: transient books (feed articles, born tombstoned) must never
+    // create Readest/books/<hash>/ residue on the remote — that residue is
+    // what the library drift-scan later re-adopts as phantom shelf entries.
+    if (book.transient || book.deletedAt) return false;
 
     try {
       const result = await engine.pullBookConfig(book, config);

@@ -108,6 +108,13 @@ export interface Book {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number | null;
+  /** FORK: set when the book was imported transiently (e.g. an RSS feed
+   *  article staged in Cache). Transient books live only in the in-memory
+   *  library for the reader's benefit — they are excluded from library.json
+   *  persistence and from every library sync (see saveLibraryBooks /
+   *  useLibraryFileSync), so they can never pollute the shelf or the shared
+   *  cloud index. */
+  transient?: boolean;
 
   uploadedAt?: number | null;
   downloadedAt?: number | null;

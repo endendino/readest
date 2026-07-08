@@ -474,8 +474,40 @@ export class FileSyncEngine {
       });
     }
 
+    // FORK: propagate remote tombstones to local LIVE rows. Upstream's index
+    // carries tombstones "so deleted books are not re-discovered", but nothing
+    // applied them to a local copy that (re)surfaced alive — e.g. rows adopted
+    // by the drift scan below on a device whose storage was evicted. Without
+    // this, a deleted book resurrects locally and the devices fight forever.
+    if (canPull && remoteIndex?.books) {
+      const resurrected = remoteIndex.books.filter(
+        (rb) => rb.deletedAt && allBooksMap.get(rb.hash) && !allBooksMap.get(rb.hash)!.deletedAt,
+      );
+      for (const rb of resurrected) {
+        const local = allBooksMap.get(rb.hash)!;
+        const dead: Book = {
+          ...local,
+          deletedAt: rb.deletedAt,
+          updatedAt: Math.max(local.updatedAt ?? 0, rb.updatedAt ?? 0),
+        };
+        allBooksMap.set(rb.hash, dead);
+        try {
+          await this.store.updateBookMetadata(dead);
+          result.metadataUpdated += 1;
+        } catch (e) {
+          console.warn('file sync: tombstone propagation failed', rb.hash, e);
+        }
+      }
+    }
+
     if (canPull) {
       const candidateHashes = new Set<string>();
+      // FORK: hash dirs whose index row is tombstoned are residue of a deleted
+      // book, not "drift" — never re-adopt them (see tombstone propagation
+      // above for the resurrection this caused).
+      const remoteDeleted = new Set(
+        (remoteIndex?.books ?? []).filter((b) => b.deletedAt).map((b) => b.hash),
+      );
 
       // 1) Seed with hashes from the remote index (when the file exists).
       if (remoteIndex && remoteIndex.books) {
@@ -495,7 +527,7 @@ export class FileSyncEngine {
         const booksDirPath = `${buildBasePath(this.provider.rootPath)}/${SYNC_BOOKS_DIR}`;
         const dirEntries = await this.provider.list(booksDirPath);
         for (const entry of dirEntries) {
-          if (entry.isDirectory && !allBooksMap.has(entry.name)) {
+          if (entry.isDirectory && !allBooksMap.has(entry.name) && !remoteDeleted.has(entry.name)) {
             candidateHashes.add(entry.name);
           }
         }

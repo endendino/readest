@@ -66,7 +66,9 @@ export const useLibraryFileSync = () => {
     if (!isAllowed) return false;
     if (activeKind === 'webdav') {
       const w = settings.webdav;
-      return !!(w?.enabled && w?.serverUrl && w?.username);
+      // username intentionally NOT required (fork): reverse-proxy mode carries
+      // empty client credentials by design — same relaxation as useFileSync.
+      return !!(w?.enabled && w?.serverUrl);
     }
     if (activeKind === 'gdrive') return !!settings.googleDrive?.enabled;
     return false;
@@ -143,7 +145,10 @@ export const useLibraryFileSync = () => {
     // skips and the next library change re-triggers it.
     if (!syncStore.beginSync(kind, _('Syncing…'))) return;
     try {
-      const books = useLibraryStore.getState().library;
+      // FORK: transient books (feed articles) live only in the in-memory
+      // library for the open reader — they must never reach the shared cloud
+      // index (the 190-article shelf pollution).
+      const books = useLibraryStore.getState().library.filter((b) => !b.transient);
       const deviceId = ensureDeviceId();
       await engine.syncLibrary(books, {
         strategy: strategy === 'prompt' ? 'silent' : strategy,
