@@ -176,6 +176,25 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
     }
   };
 
+  // FORK: release a transient book's session memory. BookData keeps the whole
+  // EPUB `file` + parsed `bookDoc` per opened book and nothing ever evicts it
+  // (clearBookData is only wired to library deletion) — for the feed flow
+  // (article → Done → next article) that accumulated every article read in the
+  // session, which is what Firefox flagged as the page hogging memory. Also
+  // deletes the article's staged Cache file so storage doesn't grow forever.
+  const releaseTransientBook = async (bookKey: string) => {
+    const { book } = getBookData(bookKey) || {};
+    if (!book?.transient) return;
+    useBookDataStore.getState().clearBookData(bookKey);
+    if (book.filePath && appService) {
+      try {
+        await appService.deleteFile(book.filePath, 'None');
+      } catch {
+        /* already gone / unsupported — fine */
+      }
+    }
+  };
+
   const saveConfigAndCloseBook = async (bookKey: string) => {
     console.log('Closing book', bookKey);
 
@@ -193,7 +212,19 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
     eventDispatcher.dispatch('tts-stop', { bookKey });
     await saveBookConfig(bookKey);
     clearViewState(bookKey);
+    await releaseTransientBook(bookKey);
   };
+
+  // FORK: also release transient books when the reader page unmounts without
+  // going through the close path (browser Back, the feed Done button's
+  // router.push). Idempotent with saveConfigAndCloseBook's release.
+  const releaseRef = useRef<() => void>(() => {});
+  releaseRef.current = () => {
+    for (const key of bookKeys) void releaseTransientBook(key);
+  };
+  useEffect(() => {
+    return () => releaseRef.current();
+  }, []);
 
   const navigateBackToLibrary = () => {
     navigateToLibrary(router, '', undefined, true);

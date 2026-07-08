@@ -28,7 +28,24 @@ export const EnvProvider = ({ children }: { children: ReactNode }) => {
       setAppService(service);
       try {
         const settings = await service.loadSettings();
-        if (settings.replicaDeviceId) {
+        // FORK: the replica engine (turso sqlite-WASM) exists to sync settings
+        // for logged-in Readest-cloud accounts — its publish path no-ops
+        // without a user. This self-hosted build has no login, so opening the
+        // local WASM replica DB is pure overhead; worse, its OPFS writes can
+        // panic in a tight loop on some browsers (Firefox: repeated
+        // sqlite3_ondisk "wrote != expected" panics), which users experience
+        // as the page "slowing down the computer". Only init when a Supabase
+        // session actually exists.
+        const hasCloudSession = (() => {
+          try {
+            return Object.keys(window.localStorage).some(
+              (k) => k.startsWith('sb-') && k.includes('auth-token'),
+            );
+          } catch {
+            return false;
+          }
+        })();
+        if (settings.replicaDeviceId && hasCloudSession) {
           const ctx = initReplicaSync({
             deviceId: settings.replicaDeviceId,
             cursorStore: createSettingsCursorStore(service),

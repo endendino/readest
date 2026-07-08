@@ -11,6 +11,9 @@ import { pokeLocalObsidianPull } from '@/services/freshrss/obsidianExport';
 import { FolderFeedList } from './components/FolderFeedList';
 import { ArticleList } from './components/ArticleList';
 
+/** Narrow view of AppService's protected `fs` used by the cache sweep. */
+type AppFsReadDir = (path: string, base: string) => Promise<{ path: string }[]>;
+
 export default function FeedsPage() {
   const _ = useTranslation();
   const router = useRouter();
@@ -51,6 +54,28 @@ export default function FeedsPage() {
   useEffect(() => {
     pokeLocalObsidianPull();
   }, []);
+
+  // Sweep stale staged article files (Cache/feed-*.epub). Articles are staged
+  // per open and released when the reader closes, but files from crashed
+  // sessions / older builds accumulated indefinitely (190+ on long-lived
+  // installs). Best-effort: any failure is ignored.
+  useEffect(() => {
+    if (!appService) return;
+    (async () => {
+      try {
+        const fs = (appService as unknown as { fs: { readDir: AppFsReadDir } }).fs;
+        const entries = await fs.readDir('', 'Cache');
+        for (const entry of entries) {
+          const name = entry.path.split('/').pop() ?? entry.path;
+          if (/^feed-.*\.epub$/.test(name)) {
+            await appService.deleteFile(name, 'Cache').catch(() => {});
+          }
+        }
+      } catch {
+        /* Cache dir missing or listing unsupported — nothing to sweep */
+      }
+    })();
+  }, [appService]);
 
   const onBack = () => {
     if (currentStreamId) clearCurrentStream();
