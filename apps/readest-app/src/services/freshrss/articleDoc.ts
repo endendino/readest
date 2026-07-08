@@ -81,7 +81,7 @@ function buildMasthead(article: FreshRSSArticle, readMinutes: number): string {
     .filter(Boolean)
     .map((s) => escapeHtml(s as string))
     .join(' · ');
-  const bylineLine = byline ? `<p>${byline}</p>` : '';
+  const bylineLine = byline ? `<p class="rss-byline">${byline}</p>` : '';
   return `${sourceLine}${titleLine}${bylineLine}<hr />`;
 }
 
