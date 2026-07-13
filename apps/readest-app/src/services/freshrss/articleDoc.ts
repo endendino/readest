@@ -82,7 +82,22 @@ function buildMasthead(article: FreshRSSArticle, readMinutes: number): string {
     .filter(Boolean)
     .map((s) => escapeHtml(s as string))
     .join(' · ');
-  const bylineLine = byline ? `<p class="rss-byline">${byline}</p>` : '';
+  // Link back to the original article, labelled with its hostname — the
+  // byline's last segment, right after the read-time. Built separately from
+  // the escaped text parts since it IS markup (href/anchor are on the
+  // sanitizer's allow-list).
+  const host = (() => {
+    try {
+      return new URL(article.url).hostname.replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  })();
+  const origin = article.url
+    ? `<a class="rss-origin" href="${escapeHtml(article.url)}">${escapeHtml(host || 'original')} ↗</a>`
+    : '';
+  const bylineParts = [byline, origin].filter(Boolean).join(' · ');
+  const bylineLine = bylineParts ? `<p class="rss-byline">${bylineParts}</p>` : '';
   return `${sourceLine}${titleLine}${bylineLine}<hr />`;
 }
 

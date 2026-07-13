@@ -23,7 +23,10 @@ const escapeXml = (str: string): string => {
 // System font stack only — the bundled EPUB stays self-contained and never
 // reaches out to the network when opened offline.
 const CSS = `
-body { line-height: 1.6; font-size: 1em; text-align: justify;
+/* padding-bottom: feed articles show floating Done / Save-to-Obsidian buttons
+   over the bottom edge; the reserve keeps the last lines scrollable clear of
+   them so they read as sitting BELOW the article, never over its text. */
+body { line-height: 1.6; font-size: 1em; text-align: justify; padding-bottom: 6.5em;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; }
 /* Headline (masthead <h1>) and in-article subheads. The masthead repeats
@@ -45,6 +48,8 @@ img { max-width: 100%; height: auto; }
 .rss-source strong { vertical-align: middle; font-weight: 700; }
 /* Byline (author · date · read time): quiet metadata under the headline. */
 .rss-byline { font-size: 0.9em; color: #555; margin: 0.2em 0 0.4em; }
+/* Link back to the original article — same quiet size, kept on one piece. */
+.rss-byline .rss-origin { white-space: nowrap; }
 figure { margin: 1em 0; }
 figcaption { font-size: 0.9em; color: #666; text-align: center; }
 blockquote { margin: 1em 1.5em; color: #444; border-left: 3px solid #ccc; padding-left: 1em; }
