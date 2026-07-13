@@ -8,6 +8,9 @@ import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
+import { useBookProgress } from '@/store/readerProgressStore';
+import { useFeedsStore } from '@/store/feedsStore';
+import { saveArticlePosition } from '@/services/freshrss/articlePositions';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useGamepad } from '@/hooks/useGamepad';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -65,6 +68,24 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
 
   useBookShortcuts({ sideBarBookKey, bookKeys });
   useGamepad();
+
+  // FORK: continuously remember a feed article's reading position under its
+  // stable GReader id. Progress otherwise lives only in memory until the
+  // close path runs — which Done / browser Back (SPA navs) and mobile tab
+  // kills never do — and the per-hash sidecar orphans whenever the staged
+  // EPUB's bytes (and thus hash) change. Relocations are already rAF-coalesced
+  // upstream, so a localStorage write per turn is cheap.
+  const primaryBookKey = bookKeys[0] ?? '';
+  const primaryProgress = useBookProgress(primaryBookKey);
+  useEffect(() => {
+    const location = primaryProgress?.location;
+    if (!location || !primaryBookKey) return;
+    const { book } = getBookData(primaryBookKey) || {};
+    if (!book?.transient) return;
+    const greaderId = useFeedsStore.getState().openArticles[book.hash]?.greaderId;
+    if (greaderId) saveArticlePosition(greaderId, location);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryProgress?.location, primaryBookKey]);
 
   useEffect(() => {
     if (isInitiating.current) return;
@@ -185,6 +206,12 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
   const releaseTransientBook = async (bookKey: string) => {
     const { book } = getBookData(bookKey) || {};
     if (!book?.transient) return;
+    // Last-chance position save: reading progress only lives in memory (the
+    // sidecar disk write is close-path-only, which SPA navigations never run),
+    // so capture it under the article's stable feed id before clearing.
+    const greaderId = useFeedsStore.getState().openArticles[book.hash]?.greaderId;
+    const location = useBookDataStore.getState().getConfig(bookKey)?.location;
+    if (greaderId && location) saveArticlePosition(greaderId, location);
     useBookDataStore.getState().clearBookData(bookKey);
     if (book.filePath && appService) {
       try {

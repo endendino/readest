@@ -9,6 +9,7 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
+import { clearArticlePosition } from '@/services/freshrss/articlePositions';
 import { exportFullArticle } from '@/services/freshrss/obsidianExport';
 import { eventDispatcher } from '@/utils/event';
 
@@ -59,6 +60,8 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
         }
       }
       await new FreshRSSClient().markRead(entry.greaderId);
+      // Finished: drop the remembered resume position along with the article.
+      clearArticlePosition(entry.greaderId);
       useFeedsStore.getState().removeArticleLocally(entry.greaderId);
       router.push('/feeds');
     } catch (e) {
