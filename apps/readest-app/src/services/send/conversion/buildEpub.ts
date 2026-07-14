@@ -46,10 +46,11 @@ img { max-width: 100%; height: auto; }
 .rss-source .rss-logo { display: inline-block; vertical-align: middle;
   height: 1.75em; width: auto; margin-inline-end: 0.4em; }
 .rss-source strong { vertical-align: middle; font-weight: 700; }
+/* The source row links to the original article; keep it looking like the
+   masthead (no underline/blue), just tappable. */
+.rss-source a { color: inherit; text-decoration: none; vertical-align: middle; }
 /* Byline (author · date · read time): quiet metadata under the headline. */
 .rss-byline { font-size: 0.9em; color: #555; margin: 0.2em 0 0.4em; }
-/* Link back to the original article — same quiet size, kept on one piece. */
-.rss-byline .rss-origin { white-space: nowrap; }
 figure { margin: 1em 0; }
 figcaption { font-size: 0.9em; color: #666; text-align: center; }
 blockquote { margin: 1em 1.5em; color: #444; border-left: 3px solid #ccc; padding-left: 1em; }

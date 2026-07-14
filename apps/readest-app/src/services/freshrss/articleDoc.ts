@@ -69,7 +69,15 @@ function buildMasthead(article: FreshRSSArticle, readMinutes: number): string {
     ? `<img class="rss-logo" src="${escapeHtml(article.feedIconUrl)}" alt="" />`
     : '';
   const source = article.feedTitle ? `<strong>${escapeHtml(article.feedTitle)}</strong>` : '';
-  const sourceLine = logo || source ? `<p class="rss-source">${logo}${source}</p>` : '';
+  // The source row (logo + name) links to the original article when we have
+  // its URL — a natural, large tap target above the headline, so no separate
+  // byline link is needed. Anchor/href are on the sanitizer allow-list.
+  const sourceInner = `${logo}${source}`;
+  const sourceContent =
+    (logo || source) && article.url
+      ? `<a href="${escapeHtml(article.url)}">${sourceInner}</a>`
+      : sourceInner;
+  const sourceLine = logo || source ? `<p class="rss-source">${sourceContent}</p>` : '';
   const titleLine = `<h1>${escapeHtml(article.title || '(untitled)')}</h1>`;
   // Estimated read time joins the byline. Hebrew feeds get a Hebrew label; the
   // masthead is a plain string with no i18n context, so this is a light
@@ -82,22 +90,7 @@ function buildMasthead(article: FreshRSSArticle, readMinutes: number): string {
     .filter(Boolean)
     .map((s) => escapeHtml(s as string))
     .join(' · ');
-  // Link back to the original article, labelled with its hostname — the
-  // byline's last segment, right after the read-time. Built separately from
-  // the escaped text parts since it IS markup (href/anchor are on the
-  // sanitizer's allow-list).
-  const host = (() => {
-    try {
-      return new URL(article.url).hostname.replace(/^www\./, '');
-    } catch {
-      return '';
-    }
-  })();
-  const origin = article.url
-    ? `<a class="rss-origin" href="${escapeHtml(article.url)}">${escapeHtml(host || 'original')} ↗</a>`
-    : '';
-  const bylineParts = [byline, origin].filter(Boolean).join(' · ');
-  const bylineLine = bylineParts ? `<p class="rss-byline">${bylineParts}</p>` : '';
+  const bylineLine = byline ? `<p class="rss-byline">${byline}</p>` : '';
   return `${sourceLine}${titleLine}${bylineLine}<hr />`;
 }
 
