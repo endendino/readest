@@ -139,7 +139,15 @@ export class KOSyncClient {
         return { success: true, message: 'Login successful.' };
       }
 
-      if (authResponse.status === 401) {
+      // A username the server doesn't know yet needs registering. Server ports
+      // disagree on how they signal "unknown user": the original koreader-sync
+      // (OpenResty/Lua) answers 401, while the Python port
+      // (b1n4ryj4n/koreader-sync) answers 403 for an unknown user and reserves
+      // 401 for a WRONG password on an EXISTING account. Attempt registration on
+      // either status so both server implementations can self-enroll; if create
+      // then comes back 409 the account already exists, so the auth failure was
+      // a bad password rather than a missing user.
+      if (authResponse.status === 401 || authResponse.status === 403) {
         const registerResponse = await this.request('/users/create', {
           method: 'POST',
           useAuth: false,
@@ -153,10 +161,13 @@ export class KOSyncClient {
           return { success: true, message: 'Registration successful.' };
         }
 
-        const regError = await registerResponse.json().catch(() => ({}));
-        if (registerResponse.status === 402) {
+        // 409 (username taken → wrong password on an existing account) and 402
+        // (some servers use it for an invalid credential) both mean the creds
+        // were bad, not that the server is unusable.
+        if (registerResponse.status === 402 || registerResponse.status === 409) {
           return { success: false, message: 'Invalid credentials.' };
         }
+        const regError = await registerResponse.json().catch(() => ({}));
         return { success: false, message: regError.message || 'Registration failed.' };
       }
 

@@ -74,6 +74,40 @@ describe('KOSyncClient.connect – server validation', () => {
     expect(result.success).toBe(true);
   });
 
+  it('registers a new user when /users/auth returns 403 (unknown user on Python kosync)', async () => {
+    // The b1n4ryj4n Python kosync port answers 403 for an unknown username
+    // (401 there means a wrong password on an existing account). connect() must
+    // still fall through to registration on 403, otherwise a brand-new username
+    // can never enroll and the user just sees "fail to connect".
+    const mock = setFetch((url: unknown) => {
+      if (String(url).includes('/users/create')) return jsonResponse(201, { username: 'alice' });
+      return jsonResponse(403, { message: 'Forbidden' });
+    });
+
+    const client = new KOSyncClient(makeConfig());
+    const result = await client.connect('alice', 'secret');
+
+    expect(result.success).toBe(true);
+    expect(mock).toHaveBeenCalledWith(expect.stringContaining('/users/create'), expect.anything());
+  });
+
+  it('reports invalid credentials when create returns 409 (wrong password, existing user)', async () => {
+    // Python kosync: 401 on /users/auth = wrong password for an EXISTING user.
+    // connect() attempts to register, the server replies 409 (already taken),
+    // which we surface as an invalid-credentials error rather than a raw failure.
+    setFetch((url: unknown) => {
+      if (String(url).includes('/users/create'))
+        return jsonResponse(409, 'Username is already registered.');
+      return jsonResponse(401, { message: 'Unauthorized' });
+    });
+
+    const client = new KOSyncClient(makeConfig());
+    const result = await client.connect('alice', 'wrong');
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Invalid credentials.');
+  });
+
   it('fails when registration (/users/create) returns 200 with a non-JSON page', async () => {
     // /users/auth → 401 routes connect() into the create path; a web UI that
     // returns 200 HTML there must not be reported as a successful registration.
