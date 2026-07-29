@@ -6,6 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
+import { useOpenArticleEntry } from '@/app/feeds/useOpenArticleEntry';
 import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
 import { exportFullArticle } from '@/services/freshrss/obsidianExport';
 import { eventDispatcher } from '@/utils/event';
@@ -20,7 +21,7 @@ export const FeedSaveButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
   const _ = useTranslation();
   const { settings } = useSettingsStore();
   const { getConfig } = useBookDataStore();
-  const entry = useFeedsStore((s) => s.openArticles[bookHash]);
+  const entry = useOpenArticleEntry(bookHash);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 

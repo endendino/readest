@@ -1,7 +1,20 @@
 import { create } from 'zustand';
 import type { FreshRSSFolder, FreshRSSFeed, FreshRSSArticle } from '@/types/freshrss';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
+import {
+  clearOpenArticleByGreaderId,
+  loadOpenArticles,
+  saveOpenArticle,
+} from '@/services/freshrss/openArticleStore';
 import type { FreshRSSSettings } from '@/types/settings';
+
+/**
+ * Monotonic token for stream loads. `openStream` clears the article list and
+ * then awaits; without this, two rapid switches can resolve out of order and
+ * paint the FIRST stream's articles over the second's. Every async load stamps
+ * a token and discards its result if a newer load has started since.
+ */
+let loadToken = 0;
 
 interface FeedsState {
   folders: FreshRSSFolder[];
@@ -14,6 +27,10 @@ interface FeedsState {
   error?: string;
   /** hash -> {greaderId, streamId} for transient article books opened in the reader. */
   openArticles: Record<string, { greaderId: string; streamId: string }>;
+  /** True once the persisted mappings have been merged in (client-side only). */
+  openArticlesHydrated: boolean;
+  /** Merge the device's persisted hash→article mappings into the store. */
+  hydrateOpenArticles: () => void;
   /** articleId -> LLM-generated quick-view summary (cached for the session). */
   summaries: Record<string, string>;
   setSummary: (articleId: string, summary: string) => void;
@@ -32,8 +49,22 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   currentTitle: '',
   articles: [],
   loading: false,
+  // Starts empty and is hydrated from localStorage on the client (see
+  // `hydrateOpenArticles`) — seeding at module scope would diverge between the
+  // SSR render and the client's, producing a hydration mismatch.
   openArticles: {},
+  openArticlesHydrated: false,
   summaries: {},
+
+  hydrateOpenArticles() {
+    if (get().openArticlesHydrated) return;
+    const persisted = loadOpenArticles();
+    set((st) => ({
+      // Anything remembered this session wins over the persisted copy.
+      openArticles: { ...persisted, ...st.openArticles },
+      openArticlesHydrated: true,
+    }));
+  },
 
   setSummary(articleId, summary) {
     set((st) => ({ summaries: { ...st.summaries, [articleId]: summary } }));
@@ -50,6 +81,7 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   },
 
   async openStream(_s, streamId, title) {
+    const token = ++loadToken;
     set({
       loading: true,
       currentStreamId: streamId,
@@ -60,6 +92,7 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
     });
     try {
       const page = await new FreshRSSClient().getUnread(streamId, 40);
+      if (token !== loadToken) return; // superseded by a newer stream switch
       const feeds = get().feeds;
       const articles = page.articles.map((a) => ({
         ...a,
@@ -67,32 +100,54 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
       }));
       set({ articles, continuation: page.continuation, loading: false });
     } catch (e) {
+      if (token !== loadToken) return;
       set({ loading: false, error: String(e) });
     }
   },
 
   async loadMore(_s) {
-    const { currentStreamId, continuation, articles, loading } = get();
+    const { currentStreamId, continuation, loading } = get();
     if (!currentStreamId || !continuation || loading) return;
+    const token = ++loadToken;
     set({ loading: true });
     try {
       const page = await new FreshRSSClient().getUnread(currentStreamId, 40, continuation);
+      if (token !== loadToken) return; // a stream switch happened mid-flight
       const feeds = get().feeds;
       const more = page.articles.map((a) => ({
         ...a,
         feedIconUrl: feeds.find((f) => f.id === a.feedId)?.iconUrl,
       }));
-      set({ articles: [...articles, ...more], continuation: page.continuation, loading: false });
+      // Append to the CURRENT list (not the one captured before awaiting) and
+      // drop any duplicate ids the server may repeat across pages.
+      set((st) => {
+        const seen = new Set(st.articles.map((a) => a.id));
+        return {
+          articles: [...st.articles, ...more.filter((a) => !seen.has(a.id))],
+          continuation: page.continuation,
+          loading: false,
+        };
+      });
     } catch (e) {
+      if (token !== loadToken) return;
       set({ loading: false, error: String(e) });
     }
   },
 
   removeArticleLocally(greaderId) {
-    set((st) => ({ articles: st.articles.filter((a) => a.id !== greaderId) }));
+    clearOpenArticleByGreaderId(greaderId);
+    set((st) => {
+      const openArticles = Object.fromEntries(
+        Object.entries(st.openArticles).filter(([, v]) => v.greaderId !== greaderId),
+      );
+      return { articles: st.articles.filter((a) => a.id !== greaderId), openArticles };
+    });
   },
 
   rememberOpenArticle(hash, greaderId, streamId) {
+    // Persist as well as store: the reader's Done/Save buttons key off this
+    // mapping, and a reload or mobile tab-kill would otherwise lose it.
+    saveOpenArticle(hash, { greaderId, streamId });
     set((st) => ({ openArticles: { ...st.openArticles, [hash]: { greaderId, streamId } } }));
   },
 

@@ -7,6 +7,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
+import { useOpenArticleEntry } from '@/app/feeds/useOpenArticleEntry';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
 import { clearArticlePosition } from '@/services/freshrss/articlePositions';
@@ -25,7 +26,7 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
   const router = useRouter();
   const { settings } = useSettingsStore();
   const { getConfig } = useBookDataStore();
-  const entry = useFeedsStore((s) => s.openArticles[bookHash]);
+  const entry = useOpenArticleEntry(bookHash);
   const [busy, setBusy] = useState(false);
 
   const fr = settings.freshrss;
