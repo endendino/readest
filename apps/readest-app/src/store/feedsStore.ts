@@ -6,6 +6,7 @@ import {
   loadOpenArticles,
   saveOpenArticle,
 } from '@/services/freshrss/openArticleStore';
+import { loadSummaries, saveSummary, type CachedSummary } from '@/services/freshrss/summaryCache';
 import type { FreshRSSSettings } from '@/types/settings';
 
 /**
@@ -31,9 +32,13 @@ interface FeedsState {
   openArticlesHydrated: boolean;
   /** Merge the device's persisted hash→article mappings into the store. */
   hydrateOpenArticles: () => void;
-  /** articleId -> LLM-generated quick-view summary (cached for the session). */
-  summaries: Record<string, string>;
-  setSummary: (articleId: string, summary: string) => void;
+  /**
+   * articleId -> LLM-generated quick-view summary. Hydrated from (and written
+   * through to) the device-local cache, so a reload no longer re-bills the
+   * paid summarize route for articles already done.
+   */
+  summaries: Record<string, CachedSummary>;
+  setSummary: (articleId: string, entry: CachedSummary) => void;
   loadFoldersAndFeeds: (s: FreshRSSSettings) => Promise<void>;
   openStream: (s: FreshRSSSettings, streamId: string, title: string) => Promise<void>;
   loadMore: (s: FreshRSSSettings) => Promise<void>;
@@ -59,15 +64,18 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   hydrateOpenArticles() {
     if (get().openArticlesHydrated) return;
     const persisted = loadOpenArticles();
+    const persistedSummaries = loadSummaries();
     set((st) => ({
       // Anything remembered this session wins over the persisted copy.
       openArticles: { ...persisted, ...st.openArticles },
+      summaries: { ...persistedSummaries, ...st.summaries },
       openArticlesHydrated: true,
     }));
   },
 
-  setSummary(articleId, summary) {
-    set((st) => ({ summaries: { ...st.summaries, [articleId]: summary } }));
+  setSummary(articleId, entry) {
+    saveSummary(articleId, entry);
+    set((st) => ({ summaries: { ...st.summaries, [articleId]: entry } }));
   },
 
   async loadFoldersAndFeeds(_s) {

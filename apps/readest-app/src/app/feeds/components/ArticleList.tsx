@@ -7,6 +7,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { useOpenFeedArticle } from '../useOpenFeedArticle';
+import type { SummaryFormat } from '@/services/freshrss/summaryCache';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { eventDispatcher } from '@/utils/event';
 import type { FreshRSSArticle } from '@/types/freshrss';
@@ -118,7 +119,7 @@ const quickViewText = (a: FreshRSSArticle) => {
  *  (incl. 501 when SUMMARY_API_KEY isn't configured). */
 const fetchSummary = async (
   a: FreshRSSArticle,
-): Promise<{ summary: string; redundant: boolean }> => {
+): Promise<{ summary: string; redundant: boolean; format: SummaryFormat }> => {
   const res = await fetch('/api/summarize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -127,12 +128,32 @@ const fetchSummary = async (
   const data = (await res.json().catch(() => null)) as {
     summary?: string;
     redundant?: boolean;
+    format?: SummaryFormat;
     error?: string;
   } | null;
   if (!res.ok || !data) throw new Error(data?.error || `summarize ${res.status}`);
-  if (data.redundant) return { summary: '', redundant: true };
+  const format: SummaryFormat = data.format === 'bullets' ? 'bullets' : 'prose';
+  if (data.redundant) return { summary: '', redundant: true, format };
   if (!data.summary) throw new Error(data.error || `summarize ${res.status}`);
-  return { summary: data.summary, redundant: false };
+  return { summary: data.summary, redundant: false, format };
+};
+
+/** Render a summary: bullet digests (long articles) as a real list, short
+ *  prose as a paragraph. The model is told to emit "- " lines for bullets. */
+const SummaryBody = ({ summary, format }: { summary: string; format: SummaryFormat }) => {
+  if (format !== 'bullets') return <>{summary}</>;
+  const items = summary
+    .split('\n')
+    .map((line) => line.replace(/^\s*[-*•]\s*/, '').trim())
+    .filter(Boolean);
+  if (items.length < 2) return <>{summary}</>;
+  return (
+    <ul className='list-disc space-y-1 ps-5'>
+      {items.map((item, i) => (
+        <li key={i}>{item}</li>
+      ))}
+    </ul>
+  );
 };
 
 const SWIPE_THRESHOLD = 80;
@@ -218,9 +239,15 @@ export const ArticleList = () => {
       return next;
     });
     try {
-      const { summary, redundant } = await fetchSummary(a);
-      if (redundant) setNoAdd((prev) => new Set(prev).add(a.id));
-      else setSummary(a.id, summary);
+      const { summary, redundant, format } = await fetchSummary(a);
+      if (redundant) {
+        setNoAdd((prev) => new Set(prev).add(a.id));
+        // Cache the verdict too, so a reload doesn't re-ask the model only to
+        // be told again that the blurb already covers it.
+        setSummary(a.id, { summary: '', format, redundant: true });
+      } else {
+        setSummary(a.id, { summary, format });
+      }
     } catch (e) {
       if (!silent) {
         eventDispatcher.dispatch('toast', {
@@ -349,7 +376,7 @@ export const ArticleList = () => {
                       {_('Summarizing…')}
                     </span>
                   )}
-                  {summaries[a.id] && (
+                  {summaries[a.id]?.summary && (
                     <div
                       dir={dir}
                       className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
@@ -358,9 +385,12 @@ export const ArticleList = () => {
                         <MdAutoAwesome className='h-3.5 w-3.5' />
                         {_('AI summary')}
                       </span>
-                      <p dir={dir} className='text-base-content/80 text-[15px]'>
-                        {summaries[a.id]}
-                      </p>
+                      <div dir={dir} className='text-base-content/80 text-[15px]'>
+                        <SummaryBody
+                          summary={summaries[a.id]!.summary}
+                          format={summaries[a.id]!.format}
+                        />
+                      </div>
                     </div>
                   )}
                   {noAdd.has(a.id) && !summaries[a.id] && (

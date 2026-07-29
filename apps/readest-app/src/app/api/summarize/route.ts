@@ -20,7 +20,56 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
-const MAX_INPUT_CHARS = 6000;
+
+// Input budget. This used to be 6,000 chars (~1,000 English words, fewer in
+// Hebrew), which meant an 8,000-word feature was summarized from its first
+// ~12% — the model never saw the rest, so coverage was structurally impossible
+// no matter how the prompt was worded. Modern flash-tier models carry
+// six-figure token contexts, so the cap exists only for cost/latency control.
+// Override with SUMMARY_MAX_INPUT_CHARS.
+const MAX_INPUT_CHARS = Number(process.env['SUMMARY_MAX_INPUT_CHARS']) || 200_000;
+
+/**
+ * Keep the whole article when it fits. Above the cap, take the opening and the
+ * ending rather than a hard head-only cut: news and essays put the thesis up
+ * front and the conclusion/implications at the end, and a head-only truncation
+ * loses the latter entirely.
+ */
+export const fitToBudget = (text: string, budget: number): string => {
+  if (text.length <= budget) return text;
+  const head = Math.floor(budget * 0.65);
+  const tail = budget - head;
+  return `${text.slice(0, head)}\n\n[…]\n\n${text.slice(-tail)}`;
+};
+
+/**
+ * How much summary a piece deserves, scaled SUB-linearly with its length: a
+ * 10x longer article gets a fuller digest, not a 10x longer one. `words` is
+ * counted on the original article, before any budget trimming.
+ */
+export const summaryShapeFor = (words: number) => {
+  if (words < 600) {
+    return { instruction: '1–2 sentences', maxTokens: 220, format: 'prose' as const };
+  }
+  if (words < 2000) {
+    return { instruction: '3–4 sentences', maxTokens: 400, format: 'prose' as const };
+  }
+  if (words < 5000) {
+    return {
+      instruction: '4–6 short bullet points, each one line',
+      maxTokens: 700,
+      format: 'bullets' as const,
+    };
+  }
+  return {
+    instruction:
+      '6–9 short bullet points, each one line, ordered to follow the article and covering its distinct sections or arguments',
+    maxTokens: 1100,
+    format: 'bullets' as const,
+  };
+};
+
+export const countWords = (s: string): number => (s ? s.split(/\s+/).filter(Boolean).length : 0);
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env['SUMMARY_API_KEY'];
@@ -39,25 +88,41 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'bad json' }, { status: 400 });
   }
-  const text = (payload.text ?? '').trim().slice(0, MAX_INPUT_CHARS);
-  if (!text) {
+  const fullText = (payload.text ?? '').trim();
+  if (!fullText) {
     return NextResponse.json({ error: 'missing text' }, { status: 400 });
   }
+  // Shape is decided on the REAL length, then the text is fitted to the budget —
+  // so a very long article still asks for (and gets) a fuller digest even if the
+  // body had to be trimmed to fit.
+  const words = countWords(fullText);
+  const shape = summaryShapeFor(words);
+  const text = fitToBudget(fullText, MAX_INPUT_CHARS);
   // The reader has already read the blurb; the summary should COMPLEMENT it, not
   // restate it. Pass it through so the model can skip what's already covered.
   const blurb = (payload.blurb ?? '').trim().slice(0, 1500);
 
+  const formatRule =
+    shape.format === 'bullets'
+      ? 'Format as plain bullet lines, each starting with "- ". No headings, no bold, no nested bullets.'
+      : 'Output ONLY the summary text — no preamble, no quotes, no labels, no markdown.';
+  const lengthRule =
+    `The article is about ${words} words long, so write ${shape.instruction}. ` +
+    'Cover the whole article, not just its opening — include its later sections, ' +
+    'conclusions and any concrete numbers, names or outcomes that matter.';
+
   const systemPrompt = blurb
-    ? 'You summarize a news article for a reader who has ALREADY read the blurb shown below. ' +
-      'Write 1–2 sentences covering ONLY the important points the blurb does NOT already mention — ' +
-      'new facts, context, consequences, or details that add to it. ' +
-      'Do NOT repeat or rephrase anything already in the blurb. ' +
-      'If the article adds nothing beyond the blurb, reply with the single word NONE. ' +
+    ? 'You summarize an article for a reader who has ALREADY read the blurb shown below. ' +
+      `${lengthRule} ` +
+      'Cover ONLY points the blurb does NOT already mention — new facts, context, ' +
+      'consequences, or details that add to it. Do NOT repeat or rephrase the blurb. ' +
+      'If the article genuinely adds nothing beyond the blurb, reply with the single word NONE. ' +
       'Always respond in the SAME language as the article. ' +
-      'Output ONLY the summary text — no preamble, no quotes, no labels, no markdown.'
-    : 'You write a concise 1–2 sentence summary (a sub-headline) of a news article. ' +
+      formatRule
+    : 'You write a summary of an article for a reader deciding whether to read it. ' +
+      `${lengthRule} ` +
       'Always respond in the SAME language as the article. ' +
-      'Output ONLY the summary text — no preamble, no quotes, no labels, no markdown.';
+      formatRule;
 
   const userPrompt = blurb
     ? `BLURB the reader has already read:\n${blurb}\n\nFULL ARTICLE:\n${text}`
@@ -70,7 +135,7 @@ export async function POST(request: NextRequest) {
       headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         model,
-        max_tokens: 300,
+        max_tokens: shape.maxTokens,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -102,5 +167,7 @@ export async function POST(request: NextRequest) {
   if (blurb && /^none[.!]?$/i.test(summary)) {
     return NextResponse.json({ summary: '', redundant: true });
   }
-  return NextResponse.json({ summary });
+  // `format` lets the client render bullet digests as a list instead of one
+  // run-on paragraph; `words` is useful for cache diagnostics.
+  return NextResponse.json({ summary, format: shape.format, words });
 }
