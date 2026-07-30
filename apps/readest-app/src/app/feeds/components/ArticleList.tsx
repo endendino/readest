@@ -1,12 +1,21 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, TouchEvent } from 'react';
-import { MdClose, MdExpandLess, MdMenuBook, MdDeleteOutline, MdAutoAwesome } from 'react-icons/md';
+import clsx from 'clsx';
+import {
+  MdClose,
+  MdExpandLess,
+  MdMenuBook,
+  MdDeleteOutline,
+  MdAutoAwesome,
+  MdSearch,
+} from 'react-icons/md';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { useOpenFeedArticle } from '../useOpenFeedArticle';
+import { useFeedShortcuts } from '../useFeedShortcuts';
 import type { SummaryFormat } from '@/services/freshrss/summaryCache';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { eventDispatcher } from '@/utils/event';
@@ -157,6 +166,8 @@ const SummaryBody = ({ summary, format }: { summary: string; format: SummaryForm
 };
 
 const SWIPE_THRESHOLD = 80;
+/** How long the "Undo" bar stays after a dismiss. */
+const UNDO_WINDOW_MS = 6000;
 
 /** Horizontal swipe-to-dismiss wrapper (touch). `touch-action: pan-y` keeps
  *  vertical list scrolling native while we own horizontal gestures. */
@@ -217,14 +228,60 @@ export const ArticleList = () => {
   const { settings } = useSettingsStore();
   const { articles, loading, error, continuation, loadMore, removeArticleLocally } =
     useFeedsStore();
-  const { summaries, setSummary } = useFeedsStore();
+  const { summaries, setSummary, restoreArticleLocally } = useFeedsStore();
+  const { currentStreamId, currentTitle, openStream } = useFeedsStore();
   const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState<Set<string>>(new Set());
   // Articles whose summary came back "nothing to add beyond the blurb".
   const [noAdd, setNoAdd] = useState<Set<string>>(new Set());
+  // Keyboard selection (desktop). Null until the first j/k so the list doesn't
+  // show a selection ring to touch users who never press a key.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // Dismiss-undo: the article is already gone from the queue (snappy) and
+  // marked read server-side, so undo has to restore both.
+  const [undo, setUndo] = useState<FreshRSSArticle | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fr = settings.freshrss;
+
+  // Client-side filter over the loaded queue. Matches title, blurb and author so
+  // "that piece about X" is findable without a round-trip to the server.
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return articles;
+    return articles.filter((a) =>
+      [a.title, a.author, quickViewText(a)].some((s) => (s ?? '').toLowerCase().includes(q)),
+    );
+  }, [articles, query]);
+
+  useEffect(
+    () => () => {
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+    },
+    [],
+  );
+
+  // Keep the selection valid as the queue changes (dismissals, filtering).
+  useEffect(() => {
+    if (selectedId && !visible.some((a) => a.id === selectedId)) {
+      setSelectedId(visible[0]?.id ?? null);
+    }
+  }, [visible, selectedId]);
+
+  const selectedIndex = visible.findIndex((a) => a.id === selectedId);
+
+  const select = (index: number) => {
+    const next = visible[Math.max(0, Math.min(index, visible.length - 1))];
+    if (!next) return;
+    setSelectedId(next.id);
+    // Optional-call: not every environment implements scrollIntoView.
+    rowRefs.current.get(next.id)?.scrollIntoView?.({ block: 'nearest' });
+  };
 
   // Generate (or regenerate) the LLM summary for an article. `silent` suppresses
   // the error toast — used for the auto path so a blurb-less article that can't
@@ -288,9 +345,13 @@ export const ArticleList = () => {
   };
 
   // Dismiss without opening: drop it from the queue immediately (snappy) and
-  // mark it read in FreshRSS in the background.
+  // mark it read in FreshRSS in the background. Offers a brief undo window,
+  // because a swipe is easy to trigger by accident and was irreversible.
   const dismiss = async (a: FreshRSSArticle) => {
     removeArticleLocally(a.id);
+    setUndo(a);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setUndo(null), UNDO_WINDOW_MS);
     if (!fr) return;
     try {
       await new FreshRSSClient().markRead(a.id);
@@ -301,6 +362,69 @@ export const ArticleList = () => {
       });
     }
   };
+
+  const undoDismiss = async () => {
+    const a = undo;
+    if (!a) return;
+    setUndo(null);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    restoreArticleLocally(a);
+    if (!fr) return;
+    try {
+      await new FreshRSSClient().markUnread(a.id);
+    } catch (e) {
+      eventDispatcher.dispatch('toast', {
+        message: _('Undo failed: {{error}}', { error: String(e) }),
+        type: 'error',
+      });
+    }
+  };
+
+  // Desktop keyboard flow. `n` reads the NEXT article straight away — the
+  // queue-burning move: it opens the one after the selection (or the first),
+  // without a detour through the list.
+  useFeedShortcuts({
+    onNext: () => select(selectedIndex < 0 ? 0 : selectedIndex + 1),
+    onPrev: () => select(selectedIndex < 0 ? 0 : selectedIndex - 1),
+    onOpen: () => {
+      const a = visible[selectedIndex] ?? visible[0];
+      if (a) void openArticle(a);
+    },
+    onNextArticle: () => {
+      const a = visible[selectedIndex + 1] ?? visible[0];
+      if (a) {
+        setSelectedId(a.id);
+        void openArticle(a);
+      }
+    },
+    onDone: () => {
+      const a = visible[selectedIndex];
+      if (a) void dismiss(a);
+    },
+    onSummarize: () => {
+      const a = visible[selectedIndex];
+      if (a) {
+        setExpandedId(a.id);
+        void runSummary(a);
+      }
+    },
+    onRefresh: () => {
+      if (fr && currentStreamId) void openStream(fr, currentStreamId, currentTitle);
+    },
+    onSearch: () => {
+      setSearchOpen(true);
+      // The field mounts on this state change, so focus after paint.
+      requestAnimationFrame(() => searchRef.current?.focus());
+    },
+    onEscape: () => {
+      if (query || searchOpen) {
+        setQuery('');
+        setSearchOpen(false);
+      } else if (expandedId) {
+        setExpandedId(null);
+      }
+    },
+  });
 
   if (loading && articles.length === 0) {
     return (
@@ -318,135 +442,192 @@ export const ArticleList = () => {
 
   return (
     <div
-      className='divide-base-200 mx-auto max-w-[600px] divide-y text-[16px] leading-[1.5]'
+      className='mx-auto max-w-[600px] text-[16px] leading-[1.5]'
       style={{ fontFamily: "'Open Sans', sans-serif" }}
     >
-      {articles.map((a) => {
-        const expanded = expandedId === a.id;
-        const wc = wordCount(a);
-        // One direction per article (from the title) so the title, byline, blurb
-        // and AI summary all align consistently — see textDir for why not auto.
-        const dir = textDir(a.title);
-        return (
-          <SwipeRow key={a.id} onDismiss={() => void dismiss(a)}>
-            <div className={expanded ? 'border-base-300 bg-base-200/30 border-y-2' : 'bg-base-100'}>
-              <div className='flex items-stretch'>
-                <button
-                  type='button'
-                  dir={dir}
-                  onClick={() => onTitleClick(a)}
-                  disabled={opening !== null}
-                  className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
-                >
-                  <span className='flex items-center gap-2 font-medium'>
-                    {opening === a.id && (
-                      <span className='loading loading-spinner loading-xs flex-shrink-0' />
-                    )}
-                    <span>{a.title}</span>
-                  </span>
-                  <span className='text-base-content/50 text-xs'>
-                    {[
-                      a.author,
-                      a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
-                      wc ? _('{{count}} words', { count: wc.toLocaleString() }) : null,
-                      a.publishedAt ? new Date(a.publishedAt).toLocaleDateString() : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                </button>
-                <button
-                  type='button'
-                  onClick={() => void dismiss(a)}
-                  aria-label={_('Mark read')}
-                  title={_('Mark read')}
-                  className='text-base-content/30 hover:text-error hidden flex-shrink-0 items-center px-3 sm:flex'
-                >
-                  <MdClose className='h-5 w-5' />
-                </button>
-              </div>
-              {expanded && (
-                <div className='px-4 pb-3'>
-                  <p dir={dir} className='text-base-content/80 text-[15px]'>
-                    {quickViewText(a)}
-                  </p>
-                  {summarizing.has(a.id) && (
-                    <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
-                      <span className='loading loading-spinner loading-xs' />
-                      {_('Summarizing…')}
+      {(searchOpen || query) && (
+        <div className='border-base-200 flex items-center gap-2 border-b px-4 py-2'>
+          <MdSearch className='text-base-content/40 h-5 w-5 flex-shrink-0' />
+          <input
+            ref={searchRef}
+            type='search'
+            dir='auto'
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={_('Filter articles…')}
+            aria-label={_('Filter articles')}
+            className='min-w-0 flex-1 bg-transparent text-[15px] outline-none'
+          />
+          <button
+            type='button'
+            onClick={() => {
+              setQuery('');
+              setSearchOpen(false);
+            }}
+            aria-label={_('Close search')}
+            className='text-base-content/40 hover:text-base-content flex h-10 w-10 flex-shrink-0 items-center justify-center'
+          >
+            <MdClose className='h-5 w-5' />
+          </button>
+        </div>
+      )}
+      {undo && (
+        <div className='border-base-200 bg-base-200/40 flex items-center gap-2 border-b px-4 py-2 text-[15px]'>
+          <span className='text-base-content/70 min-w-0 flex-1 truncate' dir='auto'>
+            {_('Marked read: {{title}}', { title: undo.title })}
+          </span>
+          <button
+            type='button'
+            onClick={() => void undoDismiss()}
+            className='btn btn-ghost btn-sm text-primary min-h-11'
+          >
+            {_('Undo')}
+          </button>
+        </div>
+      )}
+      {visible.length === 0 && (
+        <div className='text-base-content/60 p-8 text-center text-sm'>{_('No matches')}</div>
+      )}
+      <div className='divide-base-200 divide-y'>
+        {visible.map((a) => {
+          const expanded = expandedId === a.id;
+          const wc = wordCount(a);
+          // One direction per article (from the title) so the title, byline, blurb
+          // and AI summary all align consistently — see textDir for why not auto.
+          const dir = textDir(a.title);
+          const isSelected = a.id === selectedId;
+          return (
+            <SwipeRow key={a.id} onDismiss={() => void dismiss(a)}>
+              <div
+                ref={(el) => {
+                  if (el) rowRefs.current.set(a.id, el);
+                  else rowRefs.current.delete(a.id);
+                }}
+                className={clsx(
+                  expanded ? 'border-base-300 bg-base-200/30 border-y-2' : 'bg-base-100',
+                  // Keyboard selection marker — an inline-start bar rather than a
+                  // ring, so it reads correctly in both LTR and RTL.
+                  isSelected && 'border-primary border-s-4',
+                )}
+              >
+                <div className='flex items-stretch'>
+                  <button
+                    type='button'
+                    dir={dir}
+                    onClick={() => onTitleClick(a)}
+                    disabled={opening !== null}
+                    className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
+                  >
+                    <span className='flex items-center gap-2 font-medium'>
+                      {opening === a.id && (
+                        <span className='loading loading-spinner loading-xs flex-shrink-0' />
+                      )}
+                      <span>{a.title}</span>
                     </span>
-                  )}
-                  {summaries[a.id]?.summary && (
-                    <div
-                      dir={dir}
-                      className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
-                    >
-                      <span className='text-base-content/50 mb-1 flex items-center gap-1 text-xs font-medium'>
-                        <MdAutoAwesome className='h-3.5 w-3.5' />
-                        {_('AI summary')}
-                      </span>
-                      <div dir={dir} className='text-base-content/80 text-[15px]'>
-                        <SummaryBody
-                          summary={summaries[a.id]!.summary}
-                          format={summaries[a.id]!.format}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {noAdd.has(a.id) && !summaries[a.id] && (
-                    <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
-                      <MdAutoAwesome className='h-3.5 w-3.5' />
-                      {_('The blurb already covers it — nothing to add.')}
+                    <span className='text-base-content/50 text-xs'>
+                      {[
+                        a.author,
+                        a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
+                        wc ? _('{{count}} words', { count: wc.toLocaleString() }) : null,
+                        a.publishedAt ? new Date(a.publishedAt).toLocaleDateString() : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
-                  )}
-                  <div className='mt-3 flex items-center justify-center gap-2'>
-                    <button
-                      type='button'
-                      onClick={() => setExpandedId(null)}
-                      className='btn btn-ghost btn-sm gap-1'
-                    >
-                      <MdExpandLess className='h-5 w-5' />
-                      {_('Fold')}
-                    </button>
-                    <button
-                      type='button'
-                      onClick={() => void runSummary(a)}
-                      disabled={summarizing.has(a.id)}
-                      className='btn btn-ghost btn-sm gap-1'
-                    >
-                      <MdAutoAwesome className='h-5 w-5' />
-                      {_('Summarize')}
-                    </button>
-                    <button
-                      type='button'
-                      onClick={() => void openArticle(a)}
-                      disabled={opening !== null}
-                      className='btn btn-ghost btn-sm text-primary gap-1'
-                    >
-                      <MdMenuBook className='h-5 w-5' />
-                      {_('Read')}
-                    </button>
-                    <button
-                      type='button'
-                      onClick={() => void dismiss(a)}
-                      className='btn btn-ghost btn-sm hover:text-error gap-1'
-                    >
-                      <MdDeleteOutline className='h-5 w-5' />
-                      {_('Delete')}
-                    </button>
-                  </div>
+                  </button>
+                  <button
+                    type='button'
+                    onClick={() => void dismiss(a)}
+                    aria-label={_('Mark read')}
+                    title={_('Mark read')}
+                    className='text-base-content/30 hover:text-error hidden flex-shrink-0 items-center px-3 sm:flex'
+                  >
+                    <MdClose className='h-5 w-5' />
+                  </button>
                 </div>
-              )}
-            </div>
-          </SwipeRow>
-        );
-      })}
-      {continuation && (
+                {expanded && (
+                  <div className='px-4 pb-3'>
+                    <p dir={dir} className='text-base-content/80 text-[15px]'>
+                      {quickViewText(a)}
+                    </p>
+                    {summarizing.has(a.id) && (
+                      <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
+                        <span className='loading loading-spinner loading-xs' />
+                        {_('Summarizing…')}
+                      </span>
+                    )}
+                    {summaries[a.id]?.summary && (
+                      <div
+                        dir={dir}
+                        className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
+                      >
+                        <span className='text-base-content/50 mb-1 flex items-center gap-1 text-xs font-medium'>
+                          <MdAutoAwesome className='h-3.5 w-3.5' />
+                          {_('AI summary')}
+                        </span>
+                        <div dir={dir} className='text-base-content/80 text-[15px]'>
+                          <SummaryBody
+                            summary={summaries[a.id]!.summary}
+                            format={summaries[a.id]!.format}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {noAdd.has(a.id) && !summaries[a.id] && (
+                      <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
+                        <MdAutoAwesome className='h-3.5 w-3.5' />
+                        {_('The blurb already covers it — nothing to add.')}
+                      </span>
+                    )}
+                    <div className='mt-3 flex items-center justify-center gap-2'>
+                      <button
+                        type='button'
+                        onClick={() => setExpandedId(null)}
+                        className='btn btn-ghost btn-sm min-h-11 gap-1'
+                      >
+                        <MdExpandLess className='h-5 w-5' />
+                        {_('Fold')}
+                      </button>
+                      <button
+                        type='button'
+                        onClick={() => void runSummary(a)}
+                        disabled={summarizing.has(a.id)}
+                        className='btn btn-ghost btn-sm min-h-11 gap-1'
+                      >
+                        <MdAutoAwesome className='h-5 w-5' />
+                        {_('Summarize')}
+                      </button>
+                      <button
+                        type='button'
+                        onClick={() => void openArticle(a)}
+                        disabled={opening !== null}
+                        className='btn btn-ghost btn-sm text-primary min-h-11 gap-1'
+                      >
+                        <MdMenuBook className='h-5 w-5' />
+                        {_('Read')}
+                      </button>
+                      <button
+                        type='button'
+                        onClick={() => void dismiss(a)}
+                        className='btn btn-ghost btn-sm hover:text-error min-h-11 gap-1'
+                      >
+                        <MdDeleteOutline className='h-5 w-5' />
+                        {_('Delete')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </SwipeRow>
+          );
+        })}
+      </div>
+      {continuation && !query && (
         <button
           type='button'
           onClick={() => fr && void loadMore(fr)}
           disabled={loading}
-          className='text-primary w-full px-4 py-3 text-center text-sm'
+          className='text-primary min-h-12 w-full px-4 py-3 text-center text-sm'
         >
           {loading ? _('Loading…') : _('Load more')}
         </button>

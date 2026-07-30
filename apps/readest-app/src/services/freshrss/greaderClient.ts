@@ -82,6 +82,34 @@ export function buildMarkReadBody(itemId: string, writeToken: string): string {
   return p.toString();
 }
 
+/** Body for removing the read tag again (the dismiss-undo window). */
+export function buildMarkUnreadBody(itemId: string, writeToken: string): string {
+  const p = new URLSearchParams();
+  p.set('i', itemId);
+  p.set('r', READ_TAG); // `r` removes, `a` adds
+  p.set('T', writeToken);
+  return p.toString();
+}
+
+/**
+ * Body for GReader's mark-all-as-read. `ts` bounds the operation to items older
+ * than that microsecond timestamp, so articles that arrive DURING the request
+ * are not silently marked read — pass the newest timestamp the client has seen.
+ */
+export function buildMarkAllReadBody(
+  streamId: string,
+  writeToken: string,
+  beforeMs?: number,
+): string {
+  const p = new URLSearchParams();
+  p.set('s', streamId);
+  p.set('T', writeToken);
+  if (beforeMs && Number.isFinite(beforeMs)) {
+    p.set('ts', String(Math.floor(beforeMs) * 1000)); // GReader wants microseconds
+  }
+  return p.toString();
+}
+
 // --- proxy-backed client -------------------------------------------------
 // All connection details (server URL + credentials) live server-side in the
 // /api/freshrss route's env vars. This client only ever sends RELATIVE GReader
@@ -157,6 +185,28 @@ export class FreshRSSClient {
       method: 'POST',
       auth: this.auth,
       body: buildMarkReadBody(itemId, this.writeToken!),
+    });
+  }
+
+  /** Undo a mark-read (removes the read tag), for the dismiss-undo window. */
+  async markUnread(itemId: string): Promise<void> {
+    if (!this.auth || !this.writeToken) await this.login();
+    await proxy({
+      path: '/reader/api/0/edit-tag',
+      method: 'POST',
+      auth: this.auth,
+      body: buildMarkUnreadBody(itemId, this.writeToken!),
+    });
+  }
+
+  /** Mark a whole stream (feed or folder) read, bounded to items we've seen. */
+  async markAllRead(streamId: string, beforeMs?: number): Promise<void> {
+    if (!this.auth || !this.writeToken) await this.login();
+    await proxy({
+      path: '/reader/api/0/mark-all-as-read',
+      method: 'POST',
+      auth: this.auth,
+      body: buildMarkAllReadBody(streamId, this.writeToken!, beforeMs),
     });
   }
 }

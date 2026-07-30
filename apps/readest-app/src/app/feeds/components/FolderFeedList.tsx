@@ -53,7 +53,7 @@ export const FolderFeedList = () => {
                   onClick={() => toggle(folder.id)}
                   aria-label={isOpen ? _('Hide feeds') : _('Show feeds')}
                   aria-expanded={isOpen}
-                  className='text-base-content/40 hover:text-base-content flex flex-shrink-0 items-center px-2 py-3'
+                  className='text-base-content/40 hover:text-base-content flex h-11 w-11 flex-shrink-0 items-center justify-center'
                 >
                   {isOpen ? (
                     <MdKeyboardArrowDown className='h-5 w-5' />
@@ -62,13 +62,13 @@ export const FolderFeedList = () => {
                   )}
                 </button>
               ) : (
-                <span className='w-9 flex-shrink-0' />
+                <span className='w-11 flex-shrink-0' />
               )}
               <button
                 type='button'
                 dir='auto'
                 onClick={() => open(folder.id, folder.label)}
-                className='flex min-w-0 flex-1 items-center justify-between gap-3 py-3 pe-4 text-start'
+                className='flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 py-3 pe-4 text-start'
               >
                 <span className='min-w-0 truncate font-medium'>{folder.label}</span>
                 <span className='text-base-content/60 flex-shrink-0 text-sm'>
@@ -83,7 +83,7 @@ export const FolderFeedList = () => {
                   type='button'
                   dir='auto'
                   onClick={() => open(feed.id, feed.title)}
-                  className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 py-2 pe-4 ps-11 text-start'
+                  className='hover:bg-base-200/50 flex min-h-11 w-full items-center justify-between gap-3 py-2 pe-4 ps-11 text-start'
                 >
                   <span className='min-w-0 truncate text-sm'>{feed.title}</span>
                   <span className='text-base-content/50 flex-shrink-0 text-xs'>
@@ -105,7 +105,7 @@ export const FolderFeedList = () => {
               type='button'
               dir='auto'
               onClick={() => open(feed.id, feed.title)}
-              className='hover:bg-base-200/50 flex w-full items-center justify-between gap-3 px-4 py-2 text-start'
+              className='hover:bg-base-200/50 flex min-h-11 w-full items-center justify-between gap-3 px-4 py-2 text-start'
             >
               <span className='min-w-0 truncate text-sm'>{feed.title}</span>
               <span className='text-base-content/50 flex-shrink-0 text-xs'>{feed.unreadCount}</span>

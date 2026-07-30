@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { MdArrowBack } from 'react-icons/md';
+import { MdArrowBack, MdDoneAll } from 'react-icons/md';
+import { FreshRSSClient } from '@/services/freshrss/greaderClient';
+import { eventDispatcher } from '@/utils/event';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -21,6 +23,8 @@ export default function FeedsPage() {
   const { settings, setSettings } = useSettingsStore();
   const { currentStreamId, currentTitle, clearCurrentStream, loadFoldersAndFeeds } =
     useFeedsStore();
+  const { articles, clearStreamLocally } = useFeedsStore();
+  const [markingAll, setMarkingAll] = useState(false);
   const fr = settings.freshrss;
 
   // The settings store boots EMPTY ({}) and is normally hydrated from disk by
@@ -46,6 +50,18 @@ export default function FeedsPage() {
 
   useEffect(() => {
     if (fr?.enabled) void loadFoldersAndFeeds(fr);
+  }, [fr, loadFoldersAndFeeds]);
+
+  // Re-fetch unread counts when the window regains focus. The store keeps them
+  // honest locally as you read, but another device (or the FreshRSS web UI)
+  // marking things read is only visible on a real refresh.
+  useEffect(() => {
+    if (!fr?.enabled) return;
+    const onFocus = () => {
+      if (!useFeedsStore.getState().currentStreamId) void loadFoldersAndFeeds(fr);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [fr, loadFoldersAndFeeds]);
 
   // Opening Feeds on the desktop nudges the local clip-puller (a loopback
@@ -82,6 +98,29 @@ export default function FeedsPage() {
     else router.back();
   };
 
+  // Mark the whole open stream read. Bounded to the newest article this client
+  // has actually seen, so anything that arrives mid-request stays unread.
+  const markAllRead = async () => {
+    if (!currentStreamId || !fr?.enabled || markingAll) return;
+    const count = articles.length;
+    if (count === 0) return;
+    if (!window.confirm(_('Mark all {{count}} articles read?', { count }))) return;
+    setMarkingAll(true);
+    const newest = articles.reduce((max, a) => Math.max(max, a.publishedAt ?? 0), 0);
+    try {
+      await new FreshRSSClient().markAllRead(currentStreamId, newest || undefined);
+      clearStreamLocally(currentStreamId);
+      clearCurrentStream();
+    } catch (e) {
+      eventDispatcher.dispatch('toast', {
+        message: _('Mark-all-read failed: {{error}}', { error: String(e) }),
+        type: 'error',
+      });
+    } finally {
+      setMarkingAll(false);
+    }
+  };
+
   return (
     <div className='bg-base-100 mx-auto flex h-dvh w-full max-w-3xl flex-col'>
       <header className='border-base-200 flex items-center gap-2 border-b px-2 py-2'>
@@ -93,9 +132,25 @@ export default function FeedsPage() {
         >
           <MdArrowBack className='h-5 w-5' />
         </button>
-        <h1 className='min-w-0 truncate text-lg font-semibold' dir='auto'>
+        <h1 className='min-w-0 flex-1 truncate text-lg font-semibold' dir='auto'>
           {currentStreamId ? currentTitle : _('Feeds')}
         </h1>
+        {currentStreamId && articles.length > 0 && (
+          <button
+            type='button'
+            onClick={() => void markAllRead()}
+            disabled={markingAll}
+            aria-label={_('Mark all read')}
+            title={_('Mark all read')}
+            className='btn btn-ghost btn-sm btn-circle flex-shrink-0'
+          >
+            {markingAll ? (
+              <span className='loading loading-spinner loading-xs' />
+            ) : (
+              <MdDoneAll className='h-5 w-5' />
+            )}
+          </button>
+        )}
       </header>
       <div className='min-h-0 flex-1 overflow-y-auto'>
         {!settingsHydrated ? (

@@ -43,9 +43,38 @@ interface FeedsState {
   openStream: (s: FreshRSSSettings, streamId: string, title: string) => Promise<void>;
   loadMore: (s: FreshRSSSettings) => Promise<void>;
   removeArticleLocally: (greaderId: string) => void;
+  /** Put a locally-removed article back (dismiss-undo), preserving list order. */
+  restoreArticleLocally: (article: FreshRSSArticle) => void;
+  /** Drop every article of a stream locally (mark-all-read), zeroing its count. */
+  clearStreamLocally: (streamId: string) => void;
   rememberOpenArticle: (hash: string, greaderId: string, streamId: string) => void;
   clearCurrentStream: () => void;
 }
+
+/**
+ * Keep the sidebar's unread numbers honest as articles leave (or return to) the
+ * queue. FreshRSS only reports counts on a full folder/feed refresh, so without
+ * this the numbers drift the moment you read anything.
+ * `delta` is applied to the article's feed and, through it, its folder.
+ */
+const applyUnreadDelta = (
+  feeds: FreshRSSFeed[],
+  folders: FreshRSSFolder[],
+  feedId: string,
+  delta: number,
+): { feeds: FreshRSSFeed[]; folders: FreshRSSFolder[] } => {
+  const feed = feeds.find((f) => f.id === feedId);
+  if (!feed) return { feeds, folders };
+  const clamp = (n: number) => Math.max(0, n + delta);
+  return {
+    feeds: feeds.map((f) => (f.id === feedId ? { ...f, unreadCount: clamp(f.unreadCount) } : f)),
+    folders: feed.folderId
+      ? folders.map((f) =>
+          f.id === feed.folderId ? { ...f, unreadCount: clamp(f.unreadCount) } : f,
+        )
+      : folders,
+  };
+};
 
 export const useFeedsStore = create<FeedsState>((set, get) => ({
   folders: [],
@@ -148,7 +177,47 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
       const openArticles = Object.fromEntries(
         Object.entries(st.openArticles).filter(([, v]) => v.greaderId !== greaderId),
       );
-      return { articles: st.articles.filter((a) => a.id !== greaderId), openArticles };
+      // Capture the feed BEFORE dropping the article, so the count can follow.
+      const gone = st.articles.find((a) => a.id === greaderId);
+      const counts = gone
+        ? applyUnreadDelta(st.feeds, st.folders, gone.feedId, -1)
+        : { feeds: st.feeds, folders: st.folders };
+      return {
+        articles: st.articles.filter((a) => a.id !== greaderId),
+        openArticles,
+        ...counts,
+      };
+    });
+  },
+
+  restoreArticleLocally(article) {
+    set((st) => {
+      if (st.articles.some((a) => a.id === article.id)) return st;
+      // Re-insert by publish time so an undone dismiss lands back where it was
+      // rather than jumping to the top of the queue.
+      const articles = [...st.articles, article].sort(
+        (a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0),
+      );
+      return { articles, ...applyUnreadDelta(st.feeds, st.folders, article.feedId, +1) };
+    });
+  },
+
+  clearStreamLocally(streamId) {
+    set((st) => {
+      // A stream is either a feed or a folder; zero whichever matches and, for a
+      // folder, zero its feeds too.
+      const isFolder = st.folders.some((f) => f.id === streamId);
+      const folderFeedIds = isFolder
+        ? new Set(st.feeds.filter((f) => f.folderId === streamId).map((f) => f.id))
+        : new Set<string>();
+      return {
+        articles: [],
+        continuation: undefined,
+        feeds: st.feeds.map((f) =>
+          f.id === streamId || folderFeedIds.has(f.id) ? { ...f, unreadCount: 0 } : f,
+        ),
+        folders: st.folders.map((f) => (f.id === streamId ? { ...f, unreadCount: 0 } : f)),
+      };
     });
   },
 

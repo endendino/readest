@@ -8,6 +8,8 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { useOpenArticleEntry } from '@/app/feeds/useOpenArticleEntry';
+import { useOpenFeedArticle } from '@/app/feeds/useOpenFeedArticle';
+import { useFeedShortcuts } from '@/app/feeds/useFeedShortcuts';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
 import { clearArticlePosition } from '@/services/freshrss/articlePositions';
@@ -28,12 +30,13 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
   const { getConfig } = useBookDataStore();
   const entry = useOpenArticleEntry(bookHash);
   const [busy, setBusy] = useState(false);
+  const openFeedArticle = useOpenFeedArticle();
 
   const fr = settings.freshrss;
-  if (!entry || !fr?.enabled) return null;
+  const active = !!entry && !!fr?.enabled;
 
-  const onDone = async () => {
-    if (busy) return;
+  const onDone = async ({ after }: { after: 'list' | 'next' } = { after: 'list' }) => {
+    if (busy || !entry || !fr?.enabled) return;
     setBusy(true);
     try {
       // Export to Obsidian FIRST, so a failure surfaces before the article is
@@ -64,6 +67,13 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
       // Finished: drop the remembered resume position along with the article.
       clearArticlePosition(entry.greaderId);
       useFeedsStore.getState().removeArticleLocally(entry.greaderId);
+      // `next` keeps a reading run going: open the article now at the head of
+      // the queue instead of bouncing through the list. Falls back to the list
+      // when the queue is empty or the import fails.
+      if (after === 'next') {
+        const next = useFeedsStore.getState().articles[0];
+        if (next && (await openFeedArticle(next))) return;
+      }
       router.push('/feeds');
     } catch (e) {
       eventDispatcher.dispatch('toast', {
@@ -73,6 +83,19 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
       setBusy(false);
     }
   };
+
+  // `n` = finish this article and read the next one; `d` = finish and return to
+  // the queue (same as the button). The hook is always called — React needs a
+  // stable hook order — and gated by `active`.
+  useFeedShortcuts(
+    {
+      onNextArticle: () => void onDone({ after: 'next' }),
+      onDone: () => void onDone({ after: 'list' }),
+    },
+    active,
+  );
+
+  if (!active) return null;
 
   return (
     <button
