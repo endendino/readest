@@ -16,6 +16,9 @@ import { ArticleList } from './components/ArticleList';
 /** Narrow view of AppService's protected `fs` used by the cache sweep. */
 type AppFsReadDir = (path: string, base: string) => Promise<{ path: string }[]>;
 
+/** Marks the synthetic history entry backing the open-stream (article list) view. */
+const STREAM_HASH = '#list';
+
 export default function FeedsPage() {
   const _ = useTranslation();
   const router = useRouter();
@@ -93,8 +96,44 @@ export default function FeedsPage() {
     })();
   }, [appService]);
 
+  // The stream (article-list) view gets its own history entry, so the SYSTEM
+  // back gesture walks list → folders → library exactly like the header
+  // button. Without this the hierarchy lives only in zustand and back pops
+  // real browser history, exiting /feeds entirely. The entry is marked with a
+  // hash — not history.state, which Next owns — and an already-marked entry
+  // (returning from the reader lands on it) is not re-pushed.
+  useEffect(() => {
+    if (currentStreamId && window.location.hash !== STREAM_HASH) {
+      window.history.pushState(window.history.state, '', STREAM_HASH);
+    }
+  }, [currentStreamId]);
+  // Consuming the marked entry (system back, header back, mark-all-read)
+  // closes the stream view.
+  useEffect(() => {
+    const onPop = () => {
+      if (useFeedsStore.getState().currentStreamId) clearCurrentStream();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [clearCurrentStream]);
+  // A reload while in a stream resets the store to the folder view but leaves
+  // the marked entry current — strip it so the first back press isn't dead.
+  useEffect(() => {
+    if (!useFeedsStore.getState().currentStreamId && window.location.hash === STREAM_HASH) {
+      window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
+  }, []);
+
+  // Close the stream view: consume the synthetic entry when it's there (keeps
+  // the stack balanced; the popstate handler does the store clear), plain
+  // clear otherwise.
+  const closeStream = () => {
+    if (window.location.hash === STREAM_HASH) window.history.back();
+    else clearCurrentStream();
+  };
+
   const onBack = () => {
-    if (currentStreamId) clearCurrentStream();
+    if (currentStreamId) closeStream();
     else router.back();
   };
 
@@ -110,7 +149,7 @@ export default function FeedsPage() {
     try {
       await new FreshRSSClient().markAllRead(currentStreamId, newest || undefined);
       clearStreamLocally(currentStreamId);
-      clearCurrentStream();
+      closeStream();
     } catch (e) {
       eventDispatcher.dispatch('toast', {
         message: _('Mark-all-read failed: {{error}}', { error: String(e) }),

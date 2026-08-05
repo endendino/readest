@@ -8,7 +8,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { useOpenArticleEntry } from '@/app/feeds/useOpenArticleEntry';
-import { useOpenFeedArticle } from '@/app/feeds/useOpenFeedArticle';
+import { useOpenFeedArticle, wasOpenedFromFeeds } from '@/app/feeds/useOpenFeedArticle';
 import { useFeedShortcuts } from '@/app/feeds/useFeedShortcuts';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { collectArticleHighlights } from '@/services/freshrss/articleHighlights';
@@ -68,13 +68,20 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
       clearArticlePosition(entry.greaderId);
       useFeedsStore.getState().removeArticleLocally(entry.greaderId);
       // `next` keeps a reading run going: open the article now at the head of
-      // the queue instead of bouncing through the list. Falls back to the list
-      // when the queue is empty or the import fails.
+      // the queue instead of bouncing through the list. REPLACES the current
+      // reader history entry — pushing would stack a dead entry per article
+      // (the transient EPUB is deleted on unmount), and Back would then walk
+      // corpses into the "Unable to open book" → /library bounce. Falls back
+      // to the list when the queue is empty or the import fails.
       if (after === 'next') {
         const next = useFeedsStore.getState().articles[0];
-        if (next && (await openFeedArticle(next))) return;
+        if (next && (await openFeedArticle(next, { replace: true }))) return;
       }
-      router.push('/feeds');
+      // The entry beneath this reader IS /feeds whenever the article came from
+      // the feed flow, so back() returns there without growing the stack.
+      // push() only as the deep-link/post-reload fallback (stack unknown).
+      if (wasOpenedFromFeeds()) router.back();
+      else router.push('/feeds');
     } catch (e) {
       eventDispatcher.dispatch('toast', {
         message: _('Done failed: {{error}}', { error: String(e) }),
