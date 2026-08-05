@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useEnv } from '@/context/EnvContext';
 import { isPWA, isWebAppPlatform } from '@/services/environment';
@@ -63,44 +64,50 @@ export const FEED_ARTICLE_MARGIN_BOTTOM_PX = 128;
 export function useOpenFeedArticle() {
   const router = useRouter();
   const { envConfig } = useEnv();
-  const rememberOpenArticle = useFeedsStore((s) => s.rememberOpenArticle);
-  const currentStreamId = useFeedsStore((s) => s.currentStreamId);
 
-  return async (article: FreshRSSArticle, opts?: { replace?: boolean }): Promise<boolean> => {
-    const appService = await envConfig.getAppService();
-    const path = await articleToCachePath(article, appService);
-    const { library, setLibrary } = useLibraryStore.getState();
-    const book = await appService.importBook(path, library, { transient: true });
-    if (!book) return false;
-    setLibrary(library);
-    // Seed the per-hash sidecar config BEFORE the reader mounts, so the normal
-    // loadBookConfig path picks both of these up:
-    //
-    //  - the remembered reading position. Positions are kept per ARTICLE id
-    //    (device-local, see articlePositions.ts) because the staged EPUB's
-    //    hash drifts across stagings.
-    //  - a bottom margin that clears the floating Done/Obsidian buttons. They
-    //    are fixed overlays OUTSIDE the viewer iframe, so without this the
-    //    last lines of an article render underneath them and are unreadable
-    //    on a phone. Feed articles open in scroll mode, so this costs only
-    //    trailing space at the very end of the document, not space on every
-    //    page. `config.viewSettings` wins over `globalViewSettings`, so this
-    //    applies to feed articles alone and never touches real books.
-    const savedLocation = getArticlePosition(article.id);
-    try {
-      await appService.saveBookConfig(book, {
-        ...(savedLocation ? { location: savedLocation } : {}),
-        viewSettings: { marginBottomPx: FEED_ARTICLE_MARGIN_BOTTOM_PX },
-        updatedAt: Date.now(),
-        booknotes: [],
-      } as unknown as BookConfig);
-    } catch {
-      /* best-effort — worst case the article opens at the top */
-    }
-    rememberOpenArticle(book.hash, article.id, currentStreamId ?? article.feedId);
-    openedFromFeeds = true;
-    if (opts?.replace) router.replace(readerUrl(book.hash));
-    else router.push(readerUrl(book.hash));
-    return true;
-  };
+  // MUST be identity-stable: the feed list passes this down to memoized rows,
+  // and a fresh function each render would re-render the whole queue on every
+  // keystroke. `currentStreamId` is therefore read at call time from the store
+  // rather than subscribed to, so switching streams doesn't churn it either.
+  return useCallback(
+    async (article: FreshRSSArticle, opts?: { replace?: boolean }): Promise<boolean> => {
+      const { rememberOpenArticle, currentStreamId } = useFeedsStore.getState();
+      const appService = await envConfig.getAppService();
+      const path = await articleToCachePath(article, appService);
+      const { library, setLibrary } = useLibraryStore.getState();
+      const book = await appService.importBook(path, library, { transient: true });
+      if (!book) return false;
+      setLibrary(library);
+      // Seed the per-hash sidecar config BEFORE the reader mounts, so the normal
+      // loadBookConfig path picks both of these up:
+      //
+      //  - the remembered reading position. Positions are kept per ARTICLE id
+      //    (device-local, see articlePositions.ts) because the staged EPUB's
+      //    hash drifts across stagings.
+      //  - a bottom margin that clears the floating Done/Obsidian buttons. They
+      //    are fixed overlays OUTSIDE the viewer iframe, so without this the
+      //    last lines of an article render underneath them and are unreadable
+      //    on a phone. Feed articles open in scroll mode, so this costs only
+      //    trailing space at the very end of the document, not space on every
+      //    page. `config.viewSettings` wins over `globalViewSettings`, so this
+      //    applies to feed articles alone and never touches real books.
+      const savedLocation = getArticlePosition(article.id);
+      try {
+        await appService.saveBookConfig(book, {
+          ...(savedLocation ? { location: savedLocation } : {}),
+          viewSettings: { marginBottomPx: FEED_ARTICLE_MARGIN_BOTTOM_PX },
+          updatedAt: Date.now(),
+          booknotes: [],
+        } as unknown as BookConfig);
+      } catch {
+        /* best-effort — worst case the article opens at the top */
+      }
+      rememberOpenArticle(book.hash, article.id, currentStreamId ?? article.feedId);
+      openedFromFeeds = true;
+      if (opts?.replace) router.replace(readerUrl(book.hash));
+      else router.push(readerUrl(book.hash));
+      return true;
+    },
+    [router, envConfig],
+  );
 }

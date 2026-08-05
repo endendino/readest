@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode, TouchEvent } from 'react';
 import clsx from 'clsx';
 import {
@@ -16,7 +16,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useFeedsStore } from '@/store/feedsStore';
 import { useOpenFeedArticle } from '../useOpenFeedArticle';
 import { useFeedShortcuts } from '../useFeedShortcuts';
-import type { SummaryFormat } from '@/services/freshrss/summaryCache';
+import type { CachedSummary, SummaryFormat } from '@/services/freshrss/summaryCache';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { eventDispatcher } from '@/utils/event';
 import type { FreshRSSArticle } from '@/types/freshrss';
@@ -122,6 +122,40 @@ const quickViewText = (a: FreshRSSArticle) => {
   return text.length > QUICK_VIEW_MAX ? `${text.slice(0, QUICK_VIEW_MAX).trim()}…` : text;
 };
 
+/** One formatter for the whole list. `toLocaleDateString()` per row per render
+ *  re-resolves the locale every time and showed up as real work on long queues. */
+const DATE_FMT = new Intl.DateTimeFormat();
+
+/**
+ * Everything a row needs that has to be DERIVED from the article. All of it is
+ * regex/DOM-ish string work over the full `contentHtml`, and it used to run per
+ * row on every render — and three times per article on every search keystroke.
+ * Computed once per queue change instead, and the search matches a prebuilt
+ * lowercase blob rather than re-stripping HTML per keypress.
+ */
+interface ArticleView {
+  dir: 'rtl' | 'ltr';
+  words: number;
+  dateStr: string | null;
+  categories: string | null;
+  quickView: string;
+  search: string;
+}
+
+const deriveView = (a: FreshRSSArticle): ArticleView => {
+  const quickView = quickViewText(a);
+  return {
+    // One direction per article (from the title) so the title, byline, blurb
+    // and AI summary all align consistently — see textDir for why not auto.
+    dir: textDir(a.title),
+    words: wordCount(a),
+    dateStr: a.publishedAt ? DATE_FMT.format(new Date(a.publishedAt)) : null,
+    categories: a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
+    quickView,
+    search: `${a.title} ${a.author ?? ''} ${quickView}`.toLowerCase(),
+  };
+};
+
 /** Ask the server to summarize an article. Sends the blurb the reader already
  *  saw so the model only adds what the blurb doesn't cover. `redundant` is true
  *  when the article adds nothing beyond the blurb. Throws on real failure
@@ -221,12 +255,186 @@ const SwipeRow = ({ onDismiss, children }: { onDismiss: () => void; children: Re
   );
 };
 
+/**
+ * One article row. Memoized on primitives: without this, every selection move
+ * (j/k), every expand/fold, and every undo expiry re-rendered all N rows —
+ * each one redoing the derived string work above.
+ */
+interface ArticleRowProps {
+  article: FreshRSSArticle;
+  view: ArticleView;
+  expanded: boolean;
+  selected: boolean;
+  opening: boolean;
+  summarizing: boolean;
+  noAdd: boolean;
+  summary: CachedSummary | undefined;
+  onTitleClick: (a: FreshRSSArticle) => void;
+  onOpen: (a: FreshRSSArticle) => void;
+  onDismiss: (a: FreshRSSArticle) => void;
+  onSummarize: (a: FreshRSSArticle) => void;
+  onFold: () => void;
+  registerRef: (id: string, el: HTMLDivElement | null) => void;
+}
+
+const ArticleRow = memo(function ArticleRow({
+  article: a,
+  view,
+  expanded,
+  selected,
+  opening,
+  summarizing,
+  noAdd,
+  summary,
+  onTitleClick,
+  onOpen,
+  onDismiss,
+  onSummarize,
+  onFold,
+  registerRef,
+}: ArticleRowProps) {
+  const _ = useTranslation();
+  return (
+    <SwipeRow onDismiss={() => onDismiss(a)}>
+      <div
+        ref={(el) => registerRef(a.id, el)}
+        className={clsx(
+          expanded ? 'border-base-300 bg-base-200/30 border-y-2' : 'bg-base-100',
+          // Keyboard selection marker — an inline-start bar rather than a
+          // ring, so it reads correctly in both LTR and RTL.
+          selected && 'border-primary border-s-4',
+        )}
+      >
+        <div className='flex items-stretch'>
+          <button
+            type='button'
+            dir={view.dir}
+            onClick={() => onTitleClick(a)}
+            // Only the row being opened goes inert. Disabling the whole
+            // queue turned one slow article into a frozen-looking list.
+            disabled={opening}
+            className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
+          >
+            <span className='flex items-center gap-2 font-medium'>
+              {opening && <span className='loading loading-spinner loading-xs flex-shrink-0' />}
+              <span>{a.title}</span>
+            </span>
+            <span className='text-base-content/50 text-xs'>
+              {[
+                a.author,
+                view.categories,
+                view.words ? _('{{count}} words', { count: view.words.toLocaleString() }) : null,
+                view.dateStr,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </button>
+          <button
+            type='button'
+            onClick={() => onDismiss(a)}
+            aria-label={_('Mark read')}
+            title={_('Mark read')}
+            className='text-base-content/30 hover:text-error hidden flex-shrink-0 items-center px-3 sm:flex'
+          >
+            <MdClose className='h-5 w-5' />
+          </button>
+        </div>
+        {expanded && (
+          <div className='px-4 pb-3'>
+            <p dir={view.dir} className='text-base-content/80 text-[15px]'>
+              {view.quickView}
+            </p>
+            {summarizing && (
+              <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
+                <span className='loading loading-spinner loading-xs' />
+                {_('Summarizing…')}
+              </span>
+            )}
+            {summary?.summary && (
+              <div
+                dir={view.dir}
+                className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
+              >
+                <span className='text-base-content/50 mb-1 flex items-center gap-1 text-xs font-medium'>
+                  <MdAutoAwesome className='h-3.5 w-3.5' />
+                  {_('AI summary')}
+                </span>
+                <div dir={view.dir} className='text-base-content/80 text-[15px]'>
+                  <SummaryBody summary={summary.summary} format={summary.format} />
+                </div>
+              </div>
+            )}
+            {noAdd && !summary && (
+              <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
+                <MdAutoAwesome className='h-3.5 w-3.5' />
+                {_('The blurb already covers it — nothing to add.')}
+              </span>
+            )}
+            <div className='mt-3 flex items-center justify-center gap-2'>
+              <button
+                type='button'
+                onClick={onFold}
+                className='btn btn-ghost btn-sm min-h-11 gap-1'
+              >
+                <MdExpandLess className='h-5 w-5' />
+                {_('Fold')}
+              </button>
+              <button
+                type='button'
+                onClick={() => onSummarize(a)}
+                disabled={summarizing}
+                className='btn btn-ghost btn-sm min-h-11 gap-1'
+              >
+                <MdAutoAwesome className='h-5 w-5' />
+                {_('Summarize')}
+              </button>
+              <button
+                type='button'
+                onClick={() => onOpen(a)}
+                disabled={opening}
+                className='btn btn-ghost btn-sm text-primary min-h-11 gap-1'
+              >
+                {opening ? (
+                  <span className='loading loading-spinner loading-xs' />
+                ) : (
+                  <MdMenuBook className='h-5 w-5' />
+                )}
+                {_('Read')}
+              </button>
+              <button
+                type='button'
+                onClick={() => onDismiss(a)}
+                className='btn btn-ghost btn-sm hover:text-error min-h-11 gap-1'
+              >
+                <MdDeleteOutline className='h-5 w-5' />
+                {_('Delete')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </SwipeRow>
+  );
+});
+
 export const ArticleList = () => {
   const _ = useTranslation();
   const { settings } = useSettingsStore();
-  const { articles, loading, error, continuation, loadMore } = useFeedsStore();
-  const { summaries, setSummary, dismissArticle } = useFeedsStore();
-  const { currentStreamId, currentTitle, openStream } = useFeedsStore();
+  // Granular selectors: subscribing to the whole store re-rendered the entire
+  // list on ANY store change — including summary writes and unread-count
+  // deltas that don't affect what's on screen.
+  const articles = useFeedsStore((s) => s.articles);
+  const loading = useFeedsStore((s) => s.loading);
+  const error = useFeedsStore((s) => s.error);
+  const continuation = useFeedsStore((s) => s.continuation);
+  const loadMore = useFeedsStore((s) => s.loadMore);
+  const summaries = useFeedsStore((s) => s.summaries);
+  const setSummary = useFeedsStore((s) => s.setSummary);
+  const dismissArticle = useFeedsStore((s) => s.dismissArticle);
+  const currentStreamId = useFeedsStore((s) => s.currentStreamId);
+  const currentTitle = useFeedsStore((s) => s.currentTitle);
+  const openStream = useFeedsStore((s) => s.openStream);
   const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -240,17 +448,33 @@ export const ArticleList = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // Mirrors of the transient state the handlers READ. Depending on the state
+  // itself would rebuild every handler on each change, defeating the memoized
+  // rows; refs let the handlers stay identity-stable.
+  const openingRef = useRef<string | null>(null);
+  const summarizingRef = useRef<Set<string>>(new Set());
+  const expandedRef = useRef<string | null>(null);
+  openingRef.current = opening;
+  summarizingRef.current = summarizing;
+  expandedRef.current = expandedId;
   const fr = settings.freshrss;
 
+  // Derived per-article data, computed once per queue change (see ArticleView).
+  const views = useMemo(() => {
+    const map = new Map<string, ArticleView>();
+    for (const a of articles) map.set(a.id, deriveView(a));
+    return map;
+  }, [articles]);
+
   // Client-side filter over the loaded queue. Matches title, blurb and author so
-  // "that piece about X" is findable without a round-trip to the server.
+  // "that piece about X" is findable without a round-trip to the server — now
+  // against the prebuilt lowercase blob, so a keystroke costs a substring scan
+  // rather than re-stripping every article's HTML three times.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return articles;
-    return articles.filter((a) =>
-      [a.title, a.author, quickViewText(a)].some((s) => (s ?? '').toLowerCase().includes(q)),
-    );
-  }, [articles, query]);
+    return articles.filter((a) => views.get(a.id)?.search.includes(q));
+  }, [articles, query, views]);
 
   // Keep the selection valid as the queue changes (dismissals, filtering).
   useEffect(() => {
@@ -272,84 +496,109 @@ export const ArticleList = () => {
   // Generate (or regenerate) the LLM summary for an article. `silent` suppresses
   // the error toast — used for the auto path so a blurb-less article that can't
   // be summarized just keeps its first-paragraph fallback.
-  const runSummary = async (a: FreshRSSArticle, silent = false) => {
-    if (summarizing.has(a.id)) return;
-    setSummarizing((prev) => new Set(prev).add(a.id));
-    setNoAdd((prev) => {
-      if (!prev.has(a.id)) return prev;
-      const next = new Set(prev);
-      next.delete(a.id);
-      return next;
-    });
-    try {
-      const { summary, redundant, format } = await fetchSummary(a);
-      if (redundant) {
-        setNoAdd((prev) => new Set(prev).add(a.id));
-        // Cache the verdict too, so a reload doesn't re-ask the model only to
-        // be told again that the blurb already covers it.
-        setSummary(a.id, { summary: '', format, redundant: true });
-      } else {
-        setSummary(a.id, { summary, format });
-      }
-    } catch (e) {
-      if (!silent) {
-        eventDispatcher.dispatch('toast', {
-          message: _('Summary failed: {{error}}', { error: String(e) }),
-          type: 'error',
-        });
-      }
-    } finally {
-      setSummarizing((prev) => {
+  // Handlers are memoized on stable deps so the memoized rows actually hold:
+  // transient state they need to READ (opening / summarizing / expanded) is
+  // mirrored into refs, since depending on that state directly would give
+  // every row a new callback identity on each change.
+  const runSummary = useCallback(
+    async (a: FreshRSSArticle, silent = false) => {
+      if (summarizingRef.current.has(a.id)) return;
+      setSummarizing((prev) => new Set(prev).add(a.id));
+      setNoAdd((prev) => {
+        if (!prev.has(a.id)) return prev;
         const next = new Set(prev);
         next.delete(a.id);
         return next;
       });
-    }
-  };
+      try {
+        const { summary, redundant, format } = await fetchSummary(a);
+        if (redundant) {
+          setNoAdd((prev) => new Set(prev).add(a.id));
+          // Cache the verdict too, so a reload doesn't re-ask the model only to
+          // be told again that the blurb already covers it.
+          setSummary(a.id, { summary: '', format, redundant: true });
+        } else {
+          setSummary(a.id, { summary, format });
+        }
+      } catch (e) {
+        if (!silent) {
+          eventDispatcher.dispatch('toast', {
+            message: _('Summary failed: {{error}}', { error: String(e) }),
+            type: 'error',
+          });
+        }
+      } finally {
+        setSummarizing((prev) => {
+          const next = new Set(prev);
+          next.delete(a.id);
+          return next;
+        });
+      }
+    },
+    [_, setSummary],
+  );
 
-  const openArticle = async (a: FreshRSSArticle) => {
-    if (opening) return;
-    setOpening(a.id);
-    try {
-      const ok = await openFeedArticle(a);
-      if (!ok) throw new Error('import returned no book');
-    } catch (e) {
-      eventDispatcher.dispatch('toast', {
-        message: _('Could not open article: {{error}}', { error: String(e) }),
-        type: 'error',
-      });
-    } finally {
-      // ALWAYS clear: on the success path the reader replaces this view, but a
-      // navigation that never happens (or a back into a still-mounted list)
-      // must not leave the queue stuck behind a permanent "opening" flag.
-      setOpening(null);
-    }
-  };
+  const openArticle = useCallback(
+    async (a: FreshRSSArticle) => {
+      if (openingRef.current) return;
+      setOpening(a.id);
+      try {
+        const ok = await openFeedArticle(a);
+        if (!ok) throw new Error('import returned no book');
+      } catch (e) {
+        eventDispatcher.dispatch('toast', {
+          message: _('Could not open article: {{error}}', { error: String(e) }),
+          type: 'error',
+        });
+      } finally {
+        // ALWAYS clear: on the success path the reader replaces this view, but a
+        // navigation that never happens (or a back into a still-mounted list)
+        // must not leave the queue stuck behind a permanent "opening" flag.
+        setOpening(null);
+      }
+    },
+    [_, openFeedArticle],
+  );
 
   // First tap on the title opens the quick view; a second tap opens the full
   // article in the reader. Summaries are NOT auto-generated — the user taps the
   // Summarize button, and the summary is added below the blurb (not a replacement).
-  const onTitleClick = (a: FreshRSSArticle) => {
-    if (expandedId === a.id) void openArticle(a);
-    else setExpandedId(a.id);
-  };
+  const onTitleClick = useCallback(
+    (a: FreshRSSArticle) => {
+      if (expandedRef.current === a.id) void openArticle(a);
+      else setExpandedId(a.id);
+    },
+    [openArticle],
+  );
+
+  const onFold = useCallback(() => setExpandedId(null), []);
+  const registerRef = useCallback((id: string, el: HTMLDivElement | null) => {
+    if (el) rowRefs.current.set(id, el);
+    else rowRefs.current.delete(id);
+  }, []);
+  const onSummarize = useCallback((a: FreshRSSArticle) => void runSummary(a), [runSummary]);
+  const onOpen = useCallback((a: FreshRSSArticle) => void openArticle(a), [openArticle]);
 
   // Dismiss without opening: drop it from the queue immediately (snappy) and
   // mark it read in FreshRSS in the background. The undo window itself lives
   // in the store, because the Undo control is rendered by the page header —
   // an inline bar here pushed the whole queue down as it appeared and expired.
-  const dismiss = async (a: FreshRSSArticle) => {
-    dismissArticle(a);
-    if (!fr) return;
-    try {
-      await new FreshRSSClient().markRead(a.id);
-    } catch (e) {
-      eventDispatcher.dispatch('toast', {
-        message: _('Mark-read failed: {{error}}', { error: String(e) }),
-        type: 'error',
-      });
-    }
-  };
+  const dismiss = useCallback(
+    async (a: FreshRSSArticle) => {
+      dismissArticle(a);
+      if (!fr) return;
+      try {
+        await new FreshRSSClient().markRead(a.id);
+      } catch (e) {
+        eventDispatcher.dispatch('toast', {
+          message: _('Mark-read failed: {{error}}', { error: String(e) }),
+          type: 'error',
+        });
+      }
+    },
+    [_, fr, dismissArticle],
+  );
+  const onDismiss = useCallback((a: FreshRSSArticle) => void dismiss(a), [dismiss]);
 
   // Desktop keyboard flow. `n` reads the NEXT article straight away — the
   // queue-burning move: it opens the one after the selection (or the first),
@@ -446,144 +695,25 @@ export const ArticleList = () => {
         <div className='text-base-content/60 p-8 text-center text-sm'>{_('No matches')}</div>
       )}
       <div className='divide-base-200 divide-y'>
-        {visible.map((a) => {
-          const expanded = expandedId === a.id;
-          const wc = wordCount(a);
-          // One direction per article (from the title) so the title, byline, blurb
-          // and AI summary all align consistently — see textDir for why not auto.
-          const dir = textDir(a.title);
-          const isSelected = a.id === selectedId;
-          return (
-            <SwipeRow key={a.id} onDismiss={() => void dismiss(a)}>
-              <div
-                ref={(el) => {
-                  if (el) rowRefs.current.set(a.id, el);
-                  else rowRefs.current.delete(a.id);
-                }}
-                className={clsx(
-                  expanded ? 'border-base-300 bg-base-200/30 border-y-2' : 'bg-base-100',
-                  // Keyboard selection marker — an inline-start bar rather than a
-                  // ring, so it reads correctly in both LTR and RTL.
-                  isSelected && 'border-primary border-s-4',
-                )}
-              >
-                <div className='flex items-stretch'>
-                  <button
-                    type='button'
-                    dir={dir}
-                    onClick={() => onTitleClick(a)}
-                    // Only the row being opened goes inert. Disabling the whole
-                    // queue turned one slow article into a frozen-looking list.
-                    disabled={opening === a.id}
-                    className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
-                  >
-                    <span className='flex items-center gap-2 font-medium'>
-                      {opening === a.id && (
-                        <span className='loading loading-spinner loading-xs flex-shrink-0' />
-                      )}
-                      <span>{a.title}</span>
-                    </span>
-                    <span className='text-base-content/50 text-xs'>
-                      {[
-                        a.author,
-                        a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
-                        wc ? _('{{count}} words', { count: wc.toLocaleString() }) : null,
-                        a.publishedAt ? new Date(a.publishedAt).toLocaleDateString() : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </span>
-                  </button>
-                  <button
-                    type='button'
-                    onClick={() => void dismiss(a)}
-                    aria-label={_('Mark read')}
-                    title={_('Mark read')}
-                    className='text-base-content/30 hover:text-error hidden flex-shrink-0 items-center px-3 sm:flex'
-                  >
-                    <MdClose className='h-5 w-5' />
-                  </button>
-                </div>
-                {expanded && (
-                  <div className='px-4 pb-3'>
-                    <p dir={dir} className='text-base-content/80 text-[15px]'>
-                      {quickViewText(a)}
-                    </p>
-                    {summarizing.has(a.id) && (
-                      <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
-                        <span className='loading loading-spinner loading-xs' />
-                        {_('Summarizing…')}
-                      </span>
-                    )}
-                    {summaries[a.id]?.summary && (
-                      <div
-                        dir={dir}
-                        className='bg-base-200/70 border-primary/60 mt-2 rounded-md border-s-2 px-3 py-2'
-                      >
-                        <span className='text-base-content/50 mb-1 flex items-center gap-1 text-xs font-medium'>
-                          <MdAutoAwesome className='h-3.5 w-3.5' />
-                          {_('AI summary')}
-                        </span>
-                        <div dir={dir} className='text-base-content/80 text-[15px]'>
-                          <SummaryBody
-                            summary={summaries[a.id]!.summary}
-                            format={summaries[a.id]!.format}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {noAdd.has(a.id) && !summaries[a.id] && (
-                      <span className='text-base-content/50 mt-2 flex items-center gap-1 text-xs'>
-                        <MdAutoAwesome className='h-3.5 w-3.5' />
-                        {_('The blurb already covers it — nothing to add.')}
-                      </span>
-                    )}
-                    <div className='mt-3 flex items-center justify-center gap-2'>
-                      <button
-                        type='button'
-                        onClick={() => setExpandedId(null)}
-                        className='btn btn-ghost btn-sm min-h-11 gap-1'
-                      >
-                        <MdExpandLess className='h-5 w-5' />
-                        {_('Fold')}
-                      </button>
-                      <button
-                        type='button'
-                        onClick={() => void runSummary(a)}
-                        disabled={summarizing.has(a.id)}
-                        className='btn btn-ghost btn-sm min-h-11 gap-1'
-                      >
-                        <MdAutoAwesome className='h-5 w-5' />
-                        {_('Summarize')}
-                      </button>
-                      <button
-                        type='button'
-                        onClick={() => void openArticle(a)}
-                        disabled={opening === a.id}
-                        className='btn btn-ghost btn-sm text-primary min-h-11 gap-1'
-                      >
-                        {opening === a.id ? (
-                          <span className='loading loading-spinner loading-xs' />
-                        ) : (
-                          <MdMenuBook className='h-5 w-5' />
-                        )}
-                        {_('Read')}
-                      </button>
-                      <button
-                        type='button'
-                        onClick={() => void dismiss(a)}
-                        className='btn btn-ghost btn-sm hover:text-error min-h-11 gap-1'
-                      >
-                        <MdDeleteOutline className='h-5 w-5' />
-                        {_('Delete')}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </SwipeRow>
-          );
-        })}
+        {visible.map((a) => (
+          <ArticleRow
+            key={a.id}
+            article={a}
+            view={views.get(a.id) ?? deriveView(a)}
+            expanded={expandedId === a.id}
+            selected={a.id === selectedId}
+            opening={opening === a.id}
+            summarizing={summarizing.has(a.id)}
+            noAdd={noAdd.has(a.id)}
+            summary={summaries[a.id]}
+            onTitleClick={onTitleClick}
+            onOpen={onOpen}
+            onDismiss={onDismiss}
+            onSummarize={onSummarize}
+            onFold={onFold}
+            registerRef={registerRef}
+          />
+        ))}
       </div>
       {continuation && !query && (
         <button

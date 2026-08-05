@@ -24,10 +24,18 @@ export default function FeedsPage() {
   const router = useRouter();
   const { appService } = useEnv();
   const { settings, setSettings } = useSettingsStore();
-  const { currentStreamId, currentTitle, clearCurrentStream, loadFoldersAndFeeds } =
-    useFeedsStore();
-  const { articles, clearStreamLocally } = useFeedsStore();
-  const { pendingUndo, undoDismiss } = useFeedsStore();
+  // Granular selectors — subscribing to the whole store re-rendered the header
+  // (and with it the article list) on every summary write and unread delta.
+  const currentStreamId = useFeedsStore((s) => s.currentStreamId);
+  const currentTitle = useFeedsStore((s) => s.currentTitle);
+  const clearCurrentStream = useFeedsStore((s) => s.clearCurrentStream);
+  const loadFoldersAndFeeds = useFeedsStore((s) => s.loadFoldersAndFeeds);
+  const clearStreamLocally = useFeedsStore((s) => s.clearStreamLocally);
+  const pendingUndo = useFeedsStore((s) => s.pendingUndo);
+  const undoDismiss = useFeedsStore((s) => s.undoDismiss);
+  // Only the COUNT matters here (mark-all-read gating + its confirm text), so
+  // don't re-render the header on every article-array identity change.
+  const articleCount = useFeedsStore((s) => s.articles.length);
   const [markingAll, setMarkingAll] = useState(false);
   const fr = settings.freshrss;
 
@@ -157,11 +165,13 @@ export default function FeedsPage() {
   // has actually seen, so anything that arrives mid-request stays unread.
   const markAllRead = async () => {
     if (!currentStreamId || !fr?.enabled || markingAll) return;
-    const count = articles.length;
+    const count = articleCount;
     if (count === 0) return;
     if (!window.confirm(_('Mark all {{count}} articles read?', { count }))) return;
     setMarkingAll(true);
-    const newest = articles.reduce((max, a) => Math.max(max, a.publishedAt ?? 0), 0);
+    const newest = useFeedsStore
+      .getState()
+      .articles.reduce((max, a) => Math.max(max, a.publishedAt ?? 0), 0);
     try {
       await new FreshRSSClient().markAllRead(currentStreamId, newest || undefined);
       clearStreamLocally(currentStreamId);
@@ -208,7 +218,7 @@ export default function FeedsPage() {
             {currentStreamId ? currentTitle : _('Feeds')}
           </h1>
         )}
-        {currentStreamId && articles.length > 0 && (
+        {currentStreamId && articleCount > 0 && (
           <button
             type='button'
             onClick={() => void markAllRead()}
