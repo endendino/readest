@@ -38,16 +38,24 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
   const onDone = async ({ after }: { after: 'list' | 'next' } = { after: 'list' }) => {
     if (busy || !entry || !fr?.enabled) return;
     setBusy(true);
-    try {
-      // Export to Obsidian FIRST, so a failure surfaces before the article is
-      // marked read (and thus before it leaves the queue). Only writes a note
-      // when you actually highlighted something (avoids saving every finished
-      // article); the note is the full article + highlights — same file/shape
-      // the Obsidian save button writes, so the two paths don't clobber.
-      if (fr.exportToObsidian) {
-        const highlights = collectArticleHighlights(getConfig(bookKey));
-        const article = useFeedsStore.getState().articles.find((a) => a.id === entry.greaderId);
-        if (highlights.length > 0 && article) {
+    const { greaderId } = entry;
+    const article = useFeedsStore.getState().articles.find((a) => a.id === greaderId);
+    // Snapshot the highlights now: navigation unmounts the reader and releases
+    // the transient book, so the config is gone by the time the export runs.
+    const highlights = fr.exportToObsidian ? collectArticleHighlights(getConfig(bookKey)) : [];
+
+    // Server work runs in the BACKGROUND. It used to run first, in series —
+    // Obsidian export, then login, token and edit-tag — so finishing an
+    // article could sit for a minute with nothing on screen having changed.
+    // The local queue update is authoritative for the UI; a failure surfaces
+    // as a toast, the same optimistic pattern the swipe-dismiss already uses.
+    const syncInBackground = async () => {
+      try {
+        // Only writes a note when you actually highlighted something (avoids
+        // saving every finished article); the note is the full article +
+        // highlights — same file/shape the Obsidian save button writes, so
+        // the two paths don't clobber.
+        if (fr.exportToObsidian && highlights.length > 0 && article) {
           await exportFullArticle(
             {
               title: article.title,
@@ -62,11 +70,24 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
             fr.obsidianFolder,
           );
         }
+        await new FreshRSSClient().markRead(greaderId);
+      } catch (e) {
+        // Put it back: the article is NOT read server-side, so leaving it out
+        // of the queue would silently lose it.
+        if (article) useFeedsStore.getState().restoreArticleLocally(article);
+        eventDispatcher.dispatch('toast', {
+          message: _('Done failed: {{error}}', { error: String(e) }),
+          type: 'error',
+        });
       }
-      await new FreshRSSClient().markRead(entry.greaderId);
-      // Finished: drop the remembered resume position along with the article.
-      clearArticlePosition(entry.greaderId);
-      useFeedsStore.getState().removeArticleLocally(entry.greaderId);
+    };
+
+    // Finished: drop the remembered resume position along with the article.
+    clearArticlePosition(greaderId);
+    useFeedsStore.getState().removeArticleLocally(greaderId);
+    void syncInBackground();
+
+    try {
       // `next` keeps a reading run going: open the article now at the head of
       // the queue instead of bouncing through the list. REPLACES the current
       // reader history entry — pushing would stack a dead entry per article
@@ -84,7 +105,7 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
       else router.push('/feeds');
     } catch (e) {
       eventDispatcher.dispatch('toast', {
-        message: _('Done failed: {{error}}', { error: String(e) }),
+        message: _('Could not open the next article: {{error}}', { error: String(e) }),
         type: 'error',
       });
       setBusy(false);

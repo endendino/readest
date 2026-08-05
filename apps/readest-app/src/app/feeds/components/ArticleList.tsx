@@ -332,6 +332,10 @@ export const ArticleList = () => {
         message: _('Could not open article: {{error}}', { error: String(e) }),
         type: 'error',
       });
+    } finally {
+      // ALWAYS clear: on the success path the reader replaces this view, but a
+      // navigation that never happens (or a back into a still-mounted list)
+      // must not leave the queue stuck behind a permanent "opening" flag.
       setOpening(null);
     }
   };
@@ -515,7 +519,9 @@ export const ArticleList = () => {
                     type='button'
                     dir={dir}
                     onClick={() => onTitleClick(a)}
-                    disabled={opening !== null}
+                    // Only the row being opened goes inert. Disabling the whole
+                    // queue turned one slow article into a frozen-looking list.
+                    disabled={opening === a.id}
                     className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
                   >
                     <span className='flex items-center gap-2 font-medium'>
@@ -600,10 +606,14 @@ export const ArticleList = () => {
                       <button
                         type='button'
                         onClick={() => void openArticle(a)}
-                        disabled={opening !== null}
+                        disabled={opening === a.id}
                         className='btn btn-ghost btn-sm text-primary min-h-11 gap-1'
                       >
-                        <MdMenuBook className='h-5 w-5' />
+                        {opening === a.id ? (
+                          <span className='loading loading-spinner loading-xs' />
+                        ) : (
+                          <MdMenuBook className='h-5 w-5' />
+                        )}
                         {_('Read')}
                       </button>
                       <button

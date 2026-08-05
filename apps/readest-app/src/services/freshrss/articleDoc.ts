@@ -4,15 +4,27 @@ import { htmlToBook } from '@/services/send/conversion/convertToEpub';
 import { bundleAssets } from '@/services/send/conversion/assetBundler';
 import { generateCoverSvg } from '@/services/send/conversion/coverGenerator';
 
+/** How long the decorative favicon may hold up opening an article. */
+const FAVICON_TIMEOUT_MS = 4000;
+/** Overall budget for fetching+embedding the article's images. */
+const ASSETS_TIMEOUT_MS = 10_000;
+
 /** Fetch the source feed's favicon (via the same-origin image proxy) for the
  *  cover avatar. Returns undefined on any failure — the cover generator then
- *  falls back to an initial-letter avatar. */
+ *  falls back to an initial-letter avatar.
+ *
+ *  MUST stay bounded: this runs on the article-open path, and an unbounded
+ *  await here wedged the entire feed list until reload. The proxy bounds its
+ *  own UPSTREAM fetch, which does nothing when the browser→proxy request is
+ *  what stalls. */
 async function fetchFavicon(
   iconUrl?: string,
 ): Promise<{ bytes: ArrayBuffer; mime: string } | undefined> {
   if (!iconUrl) return undefined;
   try {
-    const res = await fetch(`/api/img?url=${encodeURIComponent(iconUrl)}`);
+    const res = await fetch(`/api/img?url=${encodeURIComponent(iconUrl)}`, {
+      signal: AbortSignal.timeout(FAVICON_TIMEOUT_MS),
+    });
     if (!res.ok) return undefined;
     const mime = (res.headers.get('content-type') || '').split(';')[0] || '';
     if (!mime.startsWith('image/')) return undefined;
@@ -22,6 +34,28 @@ async function fetchFavicon(
     return undefined;
   }
 }
+
+/**
+ * Resolve to `fallback` if `work` hasn't settled within `ms`. The underlying
+ * promise is abandoned, not cancelled — callers use this for work that is
+ * merely *nice to have* before the reader opens.
+ */
+export const withDeadline = async <T>(work: Promise<T>, ms: number, fallback: T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+      }),
+    ]);
+  } catch {
+    // A failed bundle shouldn't sink the whole article either.
+    return fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -114,9 +148,23 @@ export async function articleToFile(article: FreshRSSArticle): Promise<File> {
   const body = buildMasthead(article, readMinutes) + rawBody;
   // useProxy routes the cross-origin image fetches through /api/img on web; on
   // Tauri the bundler hits the network directly (no CORS), ignoring the flag.
-  const bundle = await bundleAssets(body, article.url || '', { useProxy: true });
+  //
+  // The bundler bounds each image (8s) but not the SET of them: its 4-worker
+  // pool over a 20-image article whose origin is slow costs ~40s of dead wait
+  // before the reader appears. Cap the whole phase and fall back to the
+  // unbundled body — images then resolve to their alt text, which is a far
+  // better outcome than a minute of nothing.
   const author = article.author || article.feedTitle || '';
-  const favicon = await fetchFavicon(article.feedIconUrl);
+  const [bundle, favicon] = await Promise.all([
+    withDeadline(bundleAssets(body, article.url || '', { useProxy: true }), ASSETS_TIMEOUT_MS, {
+      html: body,
+      images: [],
+      missing: 0,
+    }),
+    // Decorative only, and independent of the image phase — run it alongside
+    // rather than after, so it can never add to the open latency.
+    fetchFavicon(article.feedIconUrl),
+  ]);
   const cover = generateCoverSvg({
     title: article.title || '(untitled)',
     siteName: article.feedTitle || '',

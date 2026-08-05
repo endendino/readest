@@ -116,6 +116,11 @@ export function buildMarkAllReadBody(
 // paths, so nothing sensitive is held in the browser or the JS bundle and the
 // connection survives any browser-storage eviction.
 
+/** Ceiling on one proxied round-trip. The server bounds its own upstream call
+ *  at 20s; without a client-side bound a wedged request hangs the UI action
+ *  that awaits it (refresh blanking the list, Done never returning). */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function proxy(opts: {
   path: string;
   method?: 'GET' | 'POST';
@@ -126,14 +131,35 @@ async function proxy(opts: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`freshrss proxy ${res.status}`);
   return res.text();
 }
 
+/**
+ * Session credentials, shared by every client instance.
+ *
+ * Each call site constructs `new FreshRSSClient()`, so per-instance auth meant
+ * re-logging in for EVERY action: mark-read was 3 sequential round-trips
+ * (ClientLogin + token + the edit) instead of 1, and opening a stream was 3
+ * instead of 1. The token is not user-specific here (credentials live
+ * server-side and never reach the browser), so caching it at module scope is
+ * safe and cuts the latency of every feed action by ~⅔.
+ */
+let sessionAuth: { auth: string; writeToken: string } | undefined;
+/** Test-only reset. */
+export const resetFreshRSSSession = () => {
+  sessionAuth = undefined;
+};
+
 export class FreshRSSClient {
-  private auth?: string;
-  private writeToken?: string;
+  private get auth() {
+    return sessionAuth?.auth;
+  }
+  private get writeToken() {
+    return sessionAuth?.writeToken;
+  }
 
   async login(): Promise<void> {
     // Credentials are injected server-side on this request.
@@ -144,31 +170,52 @@ export class FreshRSSClient {
         'FreshRSS login failed: check the server configuration (FRESHRSS_URL / FRESHRSS_USERNAME / FRESHRSS_API_PASSWORD)',
       );
     }
-    this.auth = m[1]!.trim();
-    this.writeToken = (await proxy({ path: '/reader/api/0/token', auth: this.auth })).trim();
+    const auth = m[1]!.trim();
+    const writeToken = (await proxy({ path: '/reader/api/0/token', auth })).trim();
+    sessionAuth = { auth, writeToken };
+  }
+
+  /**
+   * Run a request with the cached session, re-logging in once if the server
+   * rejects it — a cached token outlives its server-side session eventually,
+   * and that must self-heal rather than surface as a failed action.
+   */
+  private async withSession<T>(run: () => Promise<T>): Promise<T> {
+    if (!sessionAuth) await this.login();
+    try {
+      return await run();
+    } catch (e) {
+      if (!/\b40[13]\b/.test(String(e))) throw e;
+      sessionAuth = undefined;
+      await this.login();
+      return run();
+    }
   }
 
   private async getJson<T>(path: string): Promise<T> {
-    if (!this.auth) await this.login();
-    const text = await proxy({ path, auth: this.auth });
-    return JSON.parse(text) as T;
+    return this.withSession(async () => {
+      const text = await proxy({ path, auth: this.auth });
+      return JSON.parse(text) as T;
+    });
   }
 
   async listFoldersAndFeeds(): Promise<{ folders: FreshRSSFolder[]; feeds: FreshRSSFeed[] }> {
-    const folders = parseTagList(
-      await this.getJson<Parameters<typeof parseTagList>[0]>('/reader/api/0/tag/list?output=json'),
-    );
-    const feeds = parseSubscriptions(
-      await this.getJson<Parameters<typeof parseSubscriptions>[0]>(
+    // Independent reads — issue them together instead of in series, so the
+    // folder view costs one round-trip's latency rather than three.
+    const [tags, subs, unread] = await Promise.all([
+      this.getJson<Parameters<typeof parseTagList>[0]>('/reader/api/0/tag/list?output=json'),
+      this.getJson<Parameters<typeof parseSubscriptions>[0]>(
         '/reader/api/0/subscription/list?output=json',
       ),
-    );
-    const counts = parseUnreadCounts(
-      await this.getJson<Parameters<typeof parseUnreadCounts>[0]>(
+      this.getJson<Parameters<typeof parseUnreadCounts>[0]>(
         '/reader/api/0/unread-count?output=json',
       ),
+    ]);
+    return mergeUnreadCounts(
+      parseSubscriptions(subs),
+      parseTagList(tags),
+      parseUnreadCounts(unread),
     );
-    return mergeUnreadCounts(feeds, folders, counts);
   }
 
   async getUnread(streamId: string, count = 40, continuation?: string): Promise<FreshRSSPage> {
@@ -179,34 +226,37 @@ export class FreshRSSClient {
   }
 
   async markRead(itemId: string): Promise<void> {
-    if (!this.auth || !this.writeToken) await this.login();
-    await proxy({
-      path: '/reader/api/0/edit-tag',
-      method: 'POST',
-      auth: this.auth,
-      body: buildMarkReadBody(itemId, this.writeToken!),
-    });
+    await this.withSession(() =>
+      proxy({
+        path: '/reader/api/0/edit-tag',
+        method: 'POST',
+        auth: this.auth,
+        body: buildMarkReadBody(itemId, this.writeToken!),
+      }),
+    );
   }
 
   /** Undo a mark-read (removes the read tag), for the dismiss-undo window. */
   async markUnread(itemId: string): Promise<void> {
-    if (!this.auth || !this.writeToken) await this.login();
-    await proxy({
-      path: '/reader/api/0/edit-tag',
-      method: 'POST',
-      auth: this.auth,
-      body: buildMarkUnreadBody(itemId, this.writeToken!),
-    });
+    await this.withSession(() =>
+      proxy({
+        path: '/reader/api/0/edit-tag',
+        method: 'POST',
+        auth: this.auth,
+        body: buildMarkUnreadBody(itemId, this.writeToken!),
+      }),
+    );
   }
 
   /** Mark a whole stream (feed or folder) read, bounded to items we've seen. */
   async markAllRead(streamId: string, beforeMs?: number): Promise<void> {
-    if (!this.auth || !this.writeToken) await this.login();
-    await proxy({
-      path: '/reader/api/0/mark-all-as-read',
-      method: 'POST',
-      auth: this.auth,
-      body: buildMarkAllReadBody(streamId, this.writeToken!, beforeMs),
-    });
+    await this.withSession(() =>
+      proxy({
+        path: '/reader/api/0/mark-all-as-read',
+        method: 'POST',
+        auth: this.auth,
+        body: buildMarkAllReadBody(streamId, this.writeToken!, beforeMs),
+      }),
+    );
   }
 }

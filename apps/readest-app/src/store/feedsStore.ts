@@ -119,12 +119,17 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
 
   async openStream(_s, streamId, title) {
     const token = ++loadToken;
+    // Refreshing the stream you're already reading keeps the current articles
+    // on screen while the request is in flight — blanking them replaced the
+    // whole list with a full-screen spinner, so a slow server made 'r' look
+    // like the app had lost your queue. Switching streams still clears, since
+    // showing the previous feed's articles under a new title would be a lie.
+    const isRefresh = get().currentStreamId === streamId;
     set({
       loading: true,
       currentStreamId: streamId,
       currentTitle: title,
-      articles: [],
-      continuation: undefined,
+      ...(isRefresh ? {} : { articles: [], continuation: undefined }),
       error: undefined,
     });
     try {

@@ -92,6 +92,47 @@ describe('feedsStore — stream-switch race (FORK)', () => {
     expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['fast-1']);
   });
 
+  test('REFRESHING the open stream keeps its articles on screen (B4)', async () => {
+    getUnread.mockResolvedValueOnce({ articles: [article('a'), article('b')] });
+    await useFeedsStore.getState().openStream(settings, 'feed/1', 'One');
+    expect(useFeedsStore.getState().articles).toHaveLength(2);
+
+    const slow = deferred<{ articles: unknown[]; continuation?: string }>();
+    getUnread.mockReturnValueOnce(slow.promise);
+    const refresh = useFeedsStore.getState().openStream(settings, 'feed/1', 'One');
+
+    // Mid-flight: still showing the queue, not a blank list behind a spinner.
+    expect(useFeedsStore.getState().loading).toBe(true);
+    expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['a', 'b']);
+
+    slow.resolve({ articles: [article('c')] });
+    await refresh;
+    expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['c']);
+  });
+
+  test('SWITCHING streams still clears, so the old feed is never shown under a new title', async () => {
+    getUnread.mockResolvedValueOnce({ articles: [article('a')] });
+    await useFeedsStore.getState().openStream(settings, 'feed/1', 'One');
+
+    const slow = deferred<{ articles: unknown[]; continuation?: string }>();
+    getUnread.mockReturnValueOnce(slow.promise);
+    const other = useFeedsStore.getState().openStream(settings, 'feed/2', 'Two');
+    expect(useFeedsStore.getState().articles).toEqual([]);
+
+    slow.resolve({ articles: [article('z')] });
+    await other;
+    expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['z']);
+  });
+
+  test('a failed refresh keeps the queue rather than emptying it', async () => {
+    getUnread.mockResolvedValueOnce({ articles: [article('a')] });
+    await useFeedsStore.getState().openStream(settings, 'feed/1', 'One');
+    getUnread.mockRejectedValueOnce(new Error('offline'));
+    await useFeedsStore.getState().openStream(settings, 'feed/1', 'One');
+    expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['a']);
+    expect(useFeedsStore.getState().error).toContain('offline');
+  });
+
   test('loadMore appends to the current list and drops duplicate ids', async () => {
     getUnread.mockResolvedValueOnce({ articles: [article('a')], continuation: 'c1' });
     await useFeedsStore.getState().openStream(settings, 'feed/1', 'F');
