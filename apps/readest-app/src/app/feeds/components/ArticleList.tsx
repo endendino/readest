@@ -166,8 +166,6 @@ const SummaryBody = ({ summary, format }: { summary: string; format: SummaryForm
 };
 
 const SWIPE_THRESHOLD = 80;
-/** How long the "Undo" bar stays after a dismiss. */
-const UNDO_WINDOW_MS = 6000;
 
 /** Horizontal swipe-to-dismiss wrapper (touch). `touch-action: pan-y` keeps
  *  vertical list scrolling native while we own horizontal gestures. */
@@ -226,9 +224,8 @@ const SwipeRow = ({ onDismiss, children }: { onDismiss: () => void; children: Re
 export const ArticleList = () => {
   const _ = useTranslation();
   const { settings } = useSettingsStore();
-  const { articles, loading, error, continuation, loadMore, removeArticleLocally } =
-    useFeedsStore();
-  const { summaries, setSummary, restoreArticleLocally } = useFeedsStore();
+  const { articles, loading, error, continuation, loadMore } = useFeedsStore();
+  const { summaries, setSummary, dismissArticle } = useFeedsStore();
   const { currentStreamId, currentTitle, openStream } = useFeedsStore();
   const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);
@@ -243,10 +240,6 @@ export const ArticleList = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  // Dismiss-undo: the article is already gone from the queue (snappy) and
-  // marked read server-side, so undo has to restore both.
-  const [undo, setUndo] = useState<FreshRSSArticle | null>(null);
-  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fr = settings.freshrss;
 
   // Client-side filter over the loaded queue. Matches title, blurb and author so
@@ -258,13 +251,6 @@ export const ArticleList = () => {
       [a.title, a.author, quickViewText(a)].some((s) => (s ?? '').toLowerCase().includes(q)),
     );
   }, [articles, query]);
-
-  useEffect(
-    () => () => {
-      if (undoTimer.current) clearTimeout(undoTimer.current);
-    },
-    [],
-  );
 
   // Keep the selection valid as the queue changes (dismissals, filtering).
   useEffect(() => {
@@ -349,36 +335,17 @@ export const ArticleList = () => {
   };
 
   // Dismiss without opening: drop it from the queue immediately (snappy) and
-  // mark it read in FreshRSS in the background. Offers a brief undo window,
-  // because a swipe is easy to trigger by accident and was irreversible.
+  // mark it read in FreshRSS in the background. The undo window itself lives
+  // in the store, because the Undo control is rendered by the page header —
+  // an inline bar here pushed the whole queue down as it appeared and expired.
   const dismiss = async (a: FreshRSSArticle) => {
-    removeArticleLocally(a.id);
-    setUndo(a);
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => setUndo(null), UNDO_WINDOW_MS);
+    dismissArticle(a);
     if (!fr) return;
     try {
       await new FreshRSSClient().markRead(a.id);
     } catch (e) {
       eventDispatcher.dispatch('toast', {
         message: _('Mark-read failed: {{error}}', { error: String(e) }),
-        type: 'error',
-      });
-    }
-  };
-
-  const undoDismiss = async () => {
-    const a = undo;
-    if (!a) return;
-    setUndo(null);
-    if (undoTimer.current) clearTimeout(undoTimer.current);
-    restoreArticleLocally(a);
-    if (!fr) return;
-    try {
-      await new FreshRSSClient().markUnread(a.id);
-    } catch (e) {
-      eventDispatcher.dispatch('toast', {
-        message: _('Undo failed: {{error}}', { error: String(e) }),
         type: 'error',
       });
     }
@@ -472,20 +439,6 @@ export const ArticleList = () => {
             className='text-base-content/40 hover:text-base-content flex h-10 w-10 flex-shrink-0 items-center justify-center'
           >
             <MdClose className='h-5 w-5' />
-          </button>
-        </div>
-      )}
-      {undo && (
-        <div className='border-base-200 bg-base-200/40 flex items-center gap-2 border-b px-4 py-2 text-[15px]'>
-          <span className='text-base-content/70 min-w-0 flex-1 truncate' dir='auto'>
-            {_('Marked read: {{title}}', { title: undo.title })}
-          </span>
-          <button
-            type='button'
-            onClick={() => void undoDismiss()}
-            className='btn btn-ghost btn-sm text-primary min-h-11'
-          >
-            {_('Undo')}
           </button>
         </div>
       )}

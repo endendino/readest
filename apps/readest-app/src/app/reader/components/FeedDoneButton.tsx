@@ -132,7 +132,11 @@ export const FeedDoneButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
       disabled={busy}
       aria-label={_('Mark read and return to feeds')}
       title={_('Mark read')}
-      className='btn btn-primary btn-circle fixed bottom-6 end-6 z-50 h-14 w-14 shadow-lg'
+      // Sits above the Android gesture bar rather than under it. The article's
+      // own bottom margin (FEED_ARTICLE_MARGIN_BOTTOM_PX) is sized against
+      // this offset so the text never runs underneath — keep the two in sync.
+      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.5rem)' }}
+      className='btn btn-primary btn-circle fixed end-6 z-50 h-14 w-14 shadow-lg'
     >
       {busy ? <span className='loading loading-spinner' /> : <MdCheck className='h-7 w-7' />}
     </button>

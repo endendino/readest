@@ -72,7 +72,10 @@ export const FeedSaveButton = ({ bookKey, bookHash }: { bookKey: string; bookHas
       disabled={busy}
       aria-label={_('Save article to Obsidian')}
       title={saved ? _('Saved to Obsidian') : _('Save to Obsidian')}
-      className='btn btn-circle fixed bottom-6 start-6 z-50 h-14 w-14 shadow-lg'
+      // Matches FeedDoneButton: clear of the gesture bar, and accounted for by
+      // the article's bottom margin so it never covers the closing lines.
+      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.5rem)' }}
+      className='btn btn-circle fixed start-6 z-50 h-14 w-14 shadow-lg'
     >
       {busy ? (
         <span className='loading loading-spinner' />

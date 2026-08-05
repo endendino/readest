@@ -37,6 +37,20 @@ const readerUrl = (hash: string): string =>
   isWebAppPlatform() && !isPWA() ? `/reader/${hash}` : `/reader?ids=${encodeURIComponent(hash)}`;
 
 /**
+ * Bottom margin for feed articles, in px, sized to clear the floating
+ * Done/Obsidian buttons that sit over the reading area.
+ *
+ * Budget: the buttons are 56px tall (h-14) at `bottom: safe-area + 24px`, so
+ * their top edge sits at most ~(34 + 24 + 56) = 114px above the viewport
+ * bottom on a gesture-nav phone. 128 leaves a comfortable gap. Generous is
+ * cheap here: feed articles open in scroll mode, so this is trailing space at
+ * the end of the document rather than a tax on every page.
+ *
+ * Keep in sync with the `bottom` offsets in FeedDoneButton / FeedSaveButton.
+ */
+export const FEED_ARTICLE_MARGIN_BOTTOM_PX = 128;
+
+/**
  * Returns a function that opens a FreshRSS article in the reader as a transient
  * doc (staged in OPFS Cache, imported by path → never persisted to the library
  * or WebDAV-synced), records the hash→article mapping for mark-read, and
@@ -59,21 +73,29 @@ export function useOpenFeedArticle() {
     const book = await appService.importBook(path, library, { transient: true });
     if (!book) return false;
     setLibrary(library);
-    // Resume support: positions are remembered per ARTICLE id (device-local,
-    // see articlePositions.ts) because the staged EPUB's hash drifts across
-    // stagings. Seed the per-hash sidecar config with the remembered location
-    // BEFORE the reader mounts, so the normal loadBookConfig path restores it.
+    // Seed the per-hash sidecar config BEFORE the reader mounts, so the normal
+    // loadBookConfig path picks both of these up:
+    //
+    //  - the remembered reading position. Positions are kept per ARTICLE id
+    //    (device-local, see articlePositions.ts) because the staged EPUB's
+    //    hash drifts across stagings.
+    //  - a bottom margin that clears the floating Done/Obsidian buttons. They
+    //    are fixed overlays OUTSIDE the viewer iframe, so without this the
+    //    last lines of an article render underneath them and are unreadable
+    //    on a phone. Feed articles open in scroll mode, so this costs only
+    //    trailing space at the very end of the document, not space on every
+    //    page. `config.viewSettings` wins over `globalViewSettings`, so this
+    //    applies to feed articles alone and never touches real books.
     const savedLocation = getArticlePosition(article.id);
-    if (savedLocation) {
-      try {
-        await appService.saveBookConfig(book, {
-          location: savedLocation,
-          updatedAt: Date.now(),
-          booknotes: [],
-        } as unknown as BookConfig);
-      } catch {
-        /* best-effort — worst case the article opens at the top */
-      }
+    try {
+      await appService.saveBookConfig(book, {
+        ...(savedLocation ? { location: savedLocation } : {}),
+        viewSettings: { marginBottomPx: FEED_ARTICLE_MARGIN_BOTTOM_PX },
+        updatedAt: Date.now(),
+        booknotes: [],
+      } as unknown as BookConfig);
+    } catch {
+      /* best-effort — worst case the article opens at the top */
     }
     rememberOpenArticle(book.hash, article.id, currentStreamId ?? article.feedId);
     openedFromFeeds = true;

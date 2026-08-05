@@ -25,7 +25,7 @@ vi.mock('@/services/environment', async (importOriginal) => ({
 }));
 
 const importBook = vi.fn();
-const saveBookConfig = vi.fn(async () => {});
+const saveBookConfig = vi.fn(async (_book: unknown, _config: unknown) => {});
 vi.mock('@/context/EnvContext', () => ({
   useEnv: () => ({
     envConfig: { getAppService: async () => ({ importBook, saveBookConfig }) },
@@ -41,6 +41,7 @@ import {
   useOpenFeedArticle,
   wasOpenedFromFeeds,
   resetOpenedFromFeeds,
+  FEED_ARTICLE_MARGIN_BOTTOM_PX,
 } from '@/app/feeds/useOpenFeedArticle';
 import { useFeedsStore } from '@/store/feedsStore';
 import type { FreshRSSArticle } from '@/types/freshrss';
@@ -102,6 +103,31 @@ describe('useOpenFeedArticle — history discipline (A1)', () => {
       await open(ARTICLE);
     });
     expect(wasOpenedFromFeeds()).toBe(true);
+  });
+
+  test('seeds a bottom margin so the FABs never cover the closing lines', async () => {
+    render(<Harness />);
+    await act(async () => {
+      await open(ARTICLE);
+    });
+    const config = saveBookConfig.mock.calls[0]![1] as {
+      viewSettings?: { marginBottomPx?: number };
+    };
+    expect(config.viewSettings?.marginBottomPx).toBe(FEED_ARTICLE_MARGIN_BOTTOM_PX);
+    // Must clear the buttons: 56px tall at safe-area + 24px, worst-case inset.
+    expect(FEED_ARTICLE_MARGIN_BOTTOM_PX).toBeGreaterThan(34 + 24 + 56);
+  });
+
+  test('the margin is seeded even when there is no saved position to restore', async () => {
+    render(<Harness />);
+    await act(async () => {
+      await open(ARTICLE);
+    });
+    // Previously the config was only written when a position existed, so a
+    // first read got no margin at all.
+    expect(saveBookConfig).toHaveBeenCalledTimes(1);
+    const config = saveBookConfig.mock.calls[0]![1] as { location?: string };
+    expect(config.location).toBeUndefined();
   });
 
   test('a failed import navigates nowhere and leaves the flag unset', async () => {

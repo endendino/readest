@@ -146,6 +146,24 @@ describe('fork pin: no-login posture', () => {
     expect(src).toMatch(/MAX_CONSECUTIVE_FAILURES/);
     expect(src).toMatch(/disabled after repeated/);
   });
+
+  test('feed articles are excluded from reading statistics', () => {
+    // Every progress change writes through the turso WASM engine on the MAIN
+    // THREAD — the same engine already behind a circuit breaker because it
+    // stalls and panics. Running it per page turn of every feed article was a
+    // direct cause of mid-reading stalls and whole-tab freezes.
+    //
+    // If this fails after an upstream merge, RE-APPLY the pin: a transient
+    // book must yield no bookMd5, and the stats DB must not even be opened
+    // for one. Do NOT relax this test.
+    const src = read('app/reader/components/ReadingStatsTracker.tsx');
+    expect(src).toMatch(/book\?\.transient \? undefined : book\?\.hash/);
+    // The DB-open effect must bail BEFORE StatisticsDb.open for a feed article.
+    const guardIdx = src.indexOf('if (!bookMd5) return;');
+    const openIdx = src.indexOf('StatisticsDb.open');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(openIdx);
+  });
 });
 
 describe('fork pin: build-time self-hosting config', () => {

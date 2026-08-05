@@ -17,9 +17,11 @@ vi.mock('@/services/freshrss/obsidianExport', () => ({
   pokeLocalObsidianPull: vi.fn(),
   exportFullArticle: vi.fn(),
 }));
+const markUnread = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('@/services/freshrss/greaderClient', () => ({
   FreshRSSClient: class {
     markAllRead = vi.fn(async () => {});
+    markUnread = markUnread;
   },
 }));
 
@@ -43,6 +45,7 @@ const seedStores = (streamId: string | null) => {
     openArticles: {},
     openArticlesHydrated: true,
     summaries: {},
+    pendingUndo: null,
   } as never);
 };
 
@@ -127,5 +130,58 @@ describe('/feeds — stream view history entry (A2)', () => {
     seedStores(null); // reload: store reset to folder view
     render(<FeedsPage />);
     expect(window.location.hash).toBe('');
+  });
+});
+
+describe('/feeds — undo lives in the header', () => {
+  const ARTICLE = {
+    id: 'a1',
+    title: 'Budget approved by council',
+    contentHtml: '<p>x</p>',
+    url: '',
+    publishedAt: 10,
+    feedId: 'feed/1',
+    feedTitle: 'F',
+    categories: [],
+  } as never;
+
+  const seedWithUndo = () => {
+    seedStores('feed/1');
+    useFeedsStore.setState({ articles: [], pendingUndo: ARTICLE } as never);
+  };
+
+  test('the pending undo replaces the title rather than adding a row', () => {
+    seedWithUndo();
+    render(<FeedsPage />);
+    expect(screen.getByText(/Marked read: Budget approved by council/)).toBeTruthy();
+    expect(screen.getByText('Undo')).toBeTruthy();
+    // The stream title is yielded, not stacked above/below — no extra line.
+    expect(screen.queryByText('Stream')).toBeNull();
+  });
+
+  test('the title comes back once the undo window closes', () => {
+    seedStores('feed/1');
+    render(<FeedsPage />);
+    expect(screen.getByText('Stream')).toBeTruthy();
+    expect(screen.queryByText('Undo')).toBeNull();
+  });
+
+  test('Undo restores the article and un-reads it server-side', async () => {
+    seedWithUndo();
+    render(<FeedsPage />);
+    await act(async () => {
+      screen.getByText('Undo').click();
+    });
+    expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['a1']);
+    expect(useFeedsStore.getState().pendingUndo).toBeNull();
+    await vi.waitFor(() => expect(markUnread).toHaveBeenCalledWith('a1'));
+  });
+
+  test('the undo control sits alongside mark-all-read, not in place of it', () => {
+    seedStores('feed/1');
+    useFeedsStore.setState({ articles: [ARTICLE], pendingUndo: ARTICLE } as never);
+    render(<FeedsPage />);
+    expect(screen.getByText('Undo')).toBeTruthy();
+    expect(screen.getByLabelText('Mark all read')).toBeTruthy();
   });
 });

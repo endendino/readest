@@ -59,6 +59,7 @@ beforeEach(() => {
     openArticles: {},
     openArticlesHydrated: true,
     summaries: {},
+    pendingUndo: null,
   });
 });
 afterEach(() => cleanup());
@@ -168,22 +169,27 @@ describe('ArticleList — keyboard flow (C1)', () => {
 });
 
 describe('ArticleList — dismiss undo (C4)', () => {
-  test('dismissing offers an undo that restores the article and unreads it', async () => {
+  test('dismissing drops the article and offers it back via the store', () => {
     render(<ArticleList />);
     fireEvent.keyDown(document, { key: 'j' });
     fireEvent.keyDown(document, { key: 'd' });
     expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['a2', 'a3']);
-
-    fireEvent.click(screen.getByText('Undo'));
-    // Restored in publish order, and un-marked server-side.
-    expect(useFeedsStore.getState().articles.map((a) => a.id)).toEqual(['a1', 'a2', 'a3']);
-    await vi.waitFor(() => expect(markUnread).toHaveBeenCalledWith('a1'));
+    // The undo control itself lives in the page header now, not in the list.
+    expect(useFeedsStore.getState().pendingUndo?.id).toBe('a1');
   });
 
-  test('the undo bar names the article it removed', () => {
+  test('the list renders NO inline undo bar — it would push the queue down', () => {
     render(<ArticleList />);
     fireEvent.keyDown(document, { key: 'j' });
     fireEvent.keyDown(document, { key: 'd' });
-    expect(screen.getByText(/Budget approved by council/)).toBeTruthy();
+    expect(screen.queryByText('Undo')).toBeNull();
+    expect(screen.queryByText(/Marked read:/)).toBeNull();
+  });
+
+  test('dismissing still marks the article read server-side', async () => {
+    render(<ArticleList />);
+    fireEvent.keyDown(document, { key: 'j' });
+    fireEvent.keyDown(document, { key: 'd' });
+    await vi.waitFor(() => expect(markRead).toHaveBeenCalledWith('a1'));
   });
 });

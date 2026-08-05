@@ -17,6 +17,11 @@ import type { FreshRSSSettings } from '@/types/settings';
  */
 let loadToken = 0;
 
+/** How long a dismissed article can be restored. */
+export const UNDO_WINDOW_MS = 6000;
+/** Timer backing the undo window; module-scope so it survives re-renders. */
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+
 interface FeedsState {
   folders: FreshRSSFolder[];
   feeds: FreshRSSFeed[];
@@ -45,6 +50,18 @@ interface FeedsState {
   removeArticleLocally: (greaderId: string) => void;
   /** Put a locally-removed article back (dismiss-undo), preserving list order. */
   restoreArticleLocally: (article: FreshRSSArticle) => void;
+  /**
+   * The most recently dismissed article, restorable for UNDO_WINDOW_MS. Lives
+   * in the store rather than the list because the undo control is rendered by
+   * the feeds PAGE header (next to mark-all-read) — an inline bar pushed the
+   * whole queue down and made the list jump under the reader's thumb.
+   */
+  pendingUndo: FreshRSSArticle | null;
+  /** Drop an article from the queue and open the undo window. */
+  dismissArticle: (article: FreshRSSArticle) => void;
+  /** Put the last dismissed article back; returns it so callers can un-read it. */
+  undoDismiss: () => FreshRSSArticle | null;
+  clearPendingUndo: () => void;
   /** Drop every article of a stream locally (mark-all-read), zeroing its count. */
   clearStreamLocally: (streamId: string) => void;
   rememberOpenArticle: (hash: string, greaderId: string, streamId: string) => void;
@@ -89,6 +106,7 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   openArticles: {},
   openArticlesHydrated: false,
   summaries: {},
+  pendingUndo: null,
 
   hydrateOpenArticles() {
     if (get().openArticlesHydrated) return;
@@ -205,6 +223,27 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
       );
       return { articles, ...applyUnreadDelta(st.feeds, st.folders, article.feedId, +1) };
     });
+  },
+
+  dismissArticle(article) {
+    get().removeArticleLocally(article.id);
+    set({ pendingUndo: article });
+    if (undoTimer) clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => set({ pendingUndo: null }), UNDO_WINDOW_MS);
+  },
+
+  undoDismiss() {
+    const article = get().pendingUndo;
+    if (!article) return null;
+    if (undoTimer) clearTimeout(undoTimer);
+    set({ pendingUndo: null });
+    get().restoreArticleLocally(article);
+    return article;
+  },
+
+  clearPendingUndo() {
+    if (undoTimer) clearTimeout(undoTimer);
+    set({ pendingUndo: null });
   },
 
   clearStreamLocally(streamId) {

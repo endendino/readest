@@ -35,8 +35,25 @@ export default function ReadingStatsTracker({ bookKey }: { bookKey: string }) {
 
   const bookData = getBookData(bookKey);
   const book = bookData?.book;
-  // Book.hash is the partialMD5 used as KOReader's md5.
-  const bookMd5 = book?.hash;
+  // FORK PIN: transient books (FreshRSS feed articles staged as EPUBs) are
+  // excluded from reading statistics.
+  //
+  // Why: every progress change here writes through the turso WASM engine
+  // (upsertBook + insertPageEvent + recomputeBookTotals with correlated
+  // subqueries) on the MAIN THREAD. That engine is the one this fork already
+  // had to put behind a circuit breaker in webDatabaseService.ts — it stalls
+  // and panics on OPFS writes — and running it on every page turn of every
+  // feed article was a direct cause of mid-reading stalls and whole-tab
+  // freezes in the RSS flow.
+  //
+  // Why it's safe: a feed article is not a book. It never enters the library,
+  // never syncs, and its hash is re-derived on every staging, so its "reading
+  // statistics" are noise that also pollutes the stats DB with rows for
+  // documents that no longer exist. Real books are unaffected.
+  //
+  // If an upstream merge drops this: re-apply it. Guarded by
+  // src/__tests__/fork/fork-pins.test.ts — do NOT "fix" that test instead.
+  const bookMd5 = book?.transient ? undefined : book?.hash;
   const title = book?.title ?? '';
   // Book.author is the single-string author field; upsertBook takes authors: string.
   const authors = book?.author ?? '';
@@ -54,6 +71,10 @@ export default function ReadingStatsTracker({ bookKey }: { bookKey: string }) {
 
   useEffect(() => {
     if (!appService) return;
+    // FORK PIN (see bookMd5 above): don't even OPEN the statistics DB for a
+    // transient feed article — otherwise the turso WASM engine still spins up
+    // per article opened, which is precisely the cost this pin removes.
+    if (!bookMd5) return;
     let cancelled = false;
     StatisticsDb.open(appService).then((db) => {
       if (cancelled) return;

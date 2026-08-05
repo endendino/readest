@@ -27,8 +27,24 @@ export default function FeedsPage() {
   const { currentStreamId, currentTitle, clearCurrentStream, loadFoldersAndFeeds } =
     useFeedsStore();
   const { articles, clearStreamLocally } = useFeedsStore();
+  const { pendingUndo, undoDismiss } = useFeedsStore();
   const [markingAll, setMarkingAll] = useState(false);
   const fr = settings.freshrss;
+
+  // Restore the dismissed article locally, then un-read it server-side so the
+  // undo propagates to every client (the dismiss already marked it read).
+  const onUndo = async () => {
+    const article = undoDismiss();
+    if (!article || !fr?.enabled) return;
+    try {
+      await new FreshRSSClient().markUnread(article.id);
+    } catch (e) {
+      eventDispatcher.dispatch('toast', {
+        message: _('Undo failed: {{error}}', { error: String(e) }),
+        type: 'error',
+      });
+    }
+  };
 
   // The settings store boots EMPTY ({}) and is normally hydrated from disk by
   // the library page — Providers loads settings for its own boot work but
@@ -171,9 +187,27 @@ export default function FeedsPage() {
         >
           <MdArrowBack className='h-5 w-5' />
         </button>
-        <h1 className='min-w-0 flex-1 truncate text-lg font-semibold' dir='auto'>
-          {currentStreamId ? currentTitle : _('Feeds')}
-        </h1>
+        {/* While an undo is pending it takes the title's place: the control
+            belongs in the header (next to mark-all-read) rather than as an
+            inline bar, which pushed the whole queue down as it came and went. */}
+        {pendingUndo ? (
+          <div className='flex min-w-0 flex-1 items-center gap-2'>
+            <span className='text-base-content/70 min-w-0 flex-1 truncate text-sm' dir='auto'>
+              {_('Marked read: {{title}}', { title: pendingUndo.title })}
+            </span>
+            <button
+              type='button'
+              onClick={() => void onUndo()}
+              className='btn btn-ghost btn-sm text-primary flex-shrink-0'
+            >
+              {_('Undo')}
+            </button>
+          </div>
+        ) : (
+          <h1 className='min-w-0 flex-1 truncate text-lg font-semibold' dir='auto'>
+            {currentStreamId ? currentTitle : _('Feeds')}
+          </h1>
+        )}
         {currentStreamId && articles.length > 0 && (
           <button
             type='button'
