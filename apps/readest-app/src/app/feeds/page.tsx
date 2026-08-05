@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
-import { MdArrowBack, MdDoneAll } from 'react-icons/md';
+import { MdArrowBack, MdDoneAll, MdRefresh } from 'react-icons/md';
 import { FreshRSSClient } from '@/services/freshrss/greaderClient';
 import { eventDispatcher } from '@/utils/event';
 import { useEnv } from '@/context/EnvContext';
@@ -36,7 +37,17 @@ export default function FeedsPage() {
   // Only the COUNT matters here (mark-all-read gating + its confirm text), so
   // don't re-render the header on every article-array identity change.
   const articleCount = useFeedsStore((s) => s.articles.length);
+  const openStream = useFeedsStore((s) => s.openStream);
+  const loading = useFeedsStore((s) => s.loading);
   const [markingAll, setMarkingAll] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    },
+    [],
+  );
   const fr = settings.freshrss;
 
   // Restore the dismissed article locally, then un-read it server-side so the
@@ -167,7 +178,17 @@ export default function FeedsPage() {
     if (!currentStreamId || !fr?.enabled || markingAll) return;
     const count = articleCount;
     if (count === 0) return;
-    if (!window.confirm(_('Mark all {{count}} articles read?', { count }))) return;
+    // Two-tap confirm rather than window.confirm: inside the TWA that pops
+    // Chrome's system dialog with the origin in the title — the one place the
+    // flow visibly stopped feeling like an app. Matches the undo-bar idiom.
+    if (!confirmingAll) {
+      setConfirmingAll(true);
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => setConfirmingAll(false), 4000);
+      return;
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    setConfirmingAll(false);
     setMarkingAll(true);
     const newest = useFeedsStore
       .getState()
@@ -218,24 +239,42 @@ export default function FeedsPage() {
             {currentStreamId ? currentTitle : _('Feeds')}
           </h1>
         )}
+        {currentStreamId && (
+          <button
+            type='button'
+            onClick={() => fr && void openStream(fr, currentStreamId, currentTitle)}
+            disabled={loading}
+            aria-label={_('Refresh')}
+            title={_('Refresh')}
+            className='btn btn-ghost btn-sm btn-circle flex-shrink-0'
+          >
+            <MdRefresh className={clsx('h-5 w-5', loading && 'animate-spin')} />
+          </button>
+        )}
         {currentStreamId && articleCount > 0 && (
           <button
             type='button'
             onClick={() => void markAllRead()}
             disabled={markingAll}
-            aria-label={_('Mark all read')}
+            aria-label={confirmingAll ? _('Confirm mark all read') : _('Mark all read')}
             title={_('Mark all read')}
-            className='btn btn-ghost btn-sm btn-circle flex-shrink-0'
+            className={clsx(
+              'btn btn-sm flex-shrink-0',
+              confirmingAll ? 'btn-primary gap-1' : 'btn-ghost btn-circle',
+            )}
           >
             {markingAll ? (
               <span className='loading loading-spinner loading-xs' />
             ) : (
               <MdDoneAll className='h-5 w-5' />
             )}
+            {confirmingAll && !markingAll && (
+              <span className='text-xs'>{_('Read all {{count}}?', { count: articleCount })}</span>
+            )}
           </button>
         )}
       </header>
-      <div className='min-h-0 flex-1 overflow-y-auto'>
+      <div className='min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]'>
         {!settingsHydrated ? (
           // Settings still loading from disk — showing "not connected" here
           // would be a false negative on every direct load of this page.

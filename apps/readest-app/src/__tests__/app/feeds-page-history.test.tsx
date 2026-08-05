@@ -133,6 +133,65 @@ describe('/feeds — stream view history entry (A2)', () => {
   });
 });
 
+describe('/feeds — header controls (D4, D8)', () => {
+  const A = {
+    id: 'a1',
+    title: 'One',
+    contentHtml: '',
+    url: '',
+    publishedAt: 1,
+    feedId: 'feed/1',
+    feedTitle: 'F',
+    categories: [],
+  } as never;
+
+  test('a refresh control exists in the stream view (mobile has no other way)', () => {
+    seedStores('feed/1');
+    render(<FeedsPage />);
+    expect(screen.getByLabelText('Refresh')).toBeTruthy();
+  });
+
+  test('refresh re-opens the current stream', async () => {
+    seedStores('feed/1');
+    const openStream = vi.fn(async () => {});
+    useFeedsStore.setState({ openStream } as never);
+    render(<FeedsPage />);
+    await act(async () => {
+      screen.getByLabelText('Refresh').click();
+    });
+    expect(openStream).toHaveBeenCalledWith(expect.anything(), 'feed/1', 'Stream');
+  });
+
+  test('mark-all-read asks in-app rather than via a system dialog', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    seedStores('feed/1');
+    useFeedsStore.setState({ articles: [A] } as never);
+    render(<FeedsPage />);
+
+    await act(async () => {
+      screen.getByLabelText('Mark all read').click();
+    });
+    // First tap arms an in-app confirm; no browser dialog is ever used.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.getByText(/Read all 1\?/)).toBeTruthy();
+    confirmSpy.mockRestore();
+  });
+
+  test('the second tap actually marks the stream read', async () => {
+    seedStores('feed/1');
+    const clearStreamLocally = vi.fn();
+    useFeedsStore.setState({ articles: [A], clearStreamLocally } as never);
+    render(<FeedsPage />);
+    await act(async () => {
+      screen.getByLabelText('Mark all read').click();
+    });
+    await act(async () => {
+      screen.getByLabelText('Confirm mark all read').click();
+    });
+    await vi.waitFor(() => expect(clearStreamLocally).toHaveBeenCalledWith('feed/1'));
+  });
+});
+
 describe('/feeds — undo lives in the header', () => {
   const ARTICLE = {
     id: 'a1',

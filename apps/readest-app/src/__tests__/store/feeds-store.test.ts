@@ -45,7 +45,9 @@ const reset = () =>
     openArticles: {},
     openArticlesHydrated: false,
     summaries: {},
-  });
+    pendingUndo: null,
+    lastOpenedArticleId: null,
+  } as never);
 
 describe('feedsStore — stream-switch race (FORK)', () => {
   beforeEach(() => {
@@ -177,6 +179,15 @@ describe('feedsStore — openArticles persistence (FORK)', () => {
     reset();
     useFeedsStore.getState().hydrateOpenArticles();
     expect(useFeedsStore.getState().openArticles['h3']).toBeUndefined();
+  });
+
+  test('opening an article records it as the place to come back to', () => {
+    expect(useFeedsStore.getState().lastOpenedArticleId).toBeNull();
+    useFeedsStore.getState().rememberOpenArticle('hash-1', 'article-1', 'feed/1');
+    expect(useFeedsStore.getState().lastOpenedArticleId).toBe('article-1');
+    // The most recent open wins — that's where the list should restore to.
+    useFeedsStore.getState().rememberOpenArticle('hash-2', 'article-2', 'feed/1');
+    expect(useFeedsStore.getState().lastOpenedArticleId).toBe('article-2');
   });
 
   test('hydration never overwrites a mapping remembered this session', () => {

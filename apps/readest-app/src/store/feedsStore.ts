@@ -57,6 +57,13 @@ interface FeedsState {
    * whole queue down and made the list jump under the reader's thumb.
    */
   pendingUndo: FreshRSSArticle | null;
+  /**
+   * The article most recently opened in the reader. Coming back from an
+   * article remounts /feeds, so the queue reappeared scrolled to the top and
+   * you had to hunt for where you were — this lets the list restore both the
+   * scroll offset and the keyboard selection.
+   */
+  lastOpenedArticleId: string | null;
   /** Drop an article from the queue and open the undo window. */
   dismissArticle: (article: FreshRSSArticle) => void;
   /** Put the last dismissed article back; returns it so callers can un-read it. */
@@ -107,6 +114,7 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   openArticlesHydrated: false,
   summaries: {},
   pendingUndo: null,
+  lastOpenedArticleId: null,
 
   hydrateOpenArticles() {
     if (get().openArticlesHydrated) return;
@@ -266,6 +274,8 @@ export const useFeedsStore = create<FeedsState>((set, get) => ({
   },
 
   rememberOpenArticle(hash, greaderId, streamId) {
+    // Also note where we left the queue, so returning restores the position.
+    set({ lastOpenedArticleId: greaderId });
     // Persist as well as store: the reader's Done/Save buttons key off this
     // mapping, and a reload or mobile tab-kill would otherwise lose it.
     saveOpenArticle(hash, { greaderId, streamId });

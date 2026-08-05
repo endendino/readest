@@ -125,6 +125,23 @@ const quickViewText = (a: FreshRSSArticle) => {
 /** One formatter for the whole list. `toLocaleDateString()` per row per render
  *  re-resolves the locale every time and showed up as real work on long queues. */
 const DATE_FMT = new Intl.DateTimeFormat();
+const TIME_FMT = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * Feed reading is recency-driven, and a bare '8/5/2026' says nothing useful
+ * about an article posted an hour ago. Recent items get an age, today's get a
+ * clock time, older ones keep the date.
+ */
+const formatWhen = (ms: number, now: number): string => {
+  const mins = Math.floor((now - ms) / 60_000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 12) return `${hours}h`;
+  const d = new Date(ms);
+  if (hours < 48 && d.toDateString() === new Date(now).toDateString()) return TIME_FMT.format(d);
+  return DATE_FMT.format(d);
+};
 
 /**
  * Everything a row needs that has to be DERIVED from the article. All of it is
@@ -137,20 +154,22 @@ interface ArticleView {
   dir: 'rtl' | 'ltr';
   words: number;
   dateStr: string | null;
+  feedTitle: string | null;
   categories: string | null;
   quickView: string;
   search: string;
 }
 
-const deriveView = (a: FreshRSSArticle): ArticleView => {
+const deriveView = (a: FreshRSSArticle, now: number): ArticleView => {
   const quickView = quickViewText(a);
   return {
     // One direction per article (from the title) so the title, byline, blurb
     // and AI summary all align consistently — see textDir for why not auto.
     dir: textDir(a.title),
     words: wordCount(a),
-    dateStr: a.publishedAt ? DATE_FMT.format(new Date(a.publishedAt)) : null,
+    dateStr: a.publishedAt ? formatWhen(a.publishedAt, now) : null,
     categories: a.categories.map((c) => c.split('/').join(' › ')).join(', ') || null,
+    feedTitle: a.feedTitle || null,
     quickView,
     search: `${a.title} ${a.author ?? ''} ${quickView}`.toLowerCase(),
   };
@@ -268,6 +287,10 @@ interface ArticleRowProps {
   opening: boolean;
   summarizing: boolean;
   noAdd: boolean;
+  /** Opened at least once before (opening does not mark read). */
+  visited: boolean;
+  /** Show the source feed in the byline (the stream spans multiple feeds). */
+  showFeedName: boolean;
   summary: CachedSummary | undefined;
   onTitleClick: (a: FreshRSSArticle) => void;
   onOpen: (a: FreshRSSArticle) => void;
@@ -285,6 +308,8 @@ const ArticleRow = memo(function ArticleRow({
   opening,
   summarizing,
   noAdd,
+  visited,
+  showFeedName,
   summary,
   onTitleClick,
   onOpen,
@@ -315,12 +340,23 @@ const ArticleRow = memo(function ArticleRow({
             disabled={opening}
             className='hover:bg-base-200/50 flex min-w-0 flex-1 flex-col gap-1 px-4 py-3 text-start disabled:opacity-60'
           >
-            <span className='flex items-center gap-2 font-medium'>
+            <span
+              className={clsx(
+                'flex items-center gap-2',
+                // Already-opened articles read as "seen": you backed out of it
+                // rather than finishing, and it stayed in the queue.
+                visited ? 'text-base-content/60 font-normal' : 'font-medium',
+              )}
+            >
               {opening && <span className='loading loading-spinner loading-xs flex-shrink-0' />}
               <span>{a.title}</span>
             </span>
             <span className='text-base-content/50 text-xs'>
               {[
+                // Which feed this came from matters when the open stream is a
+                // folder spanning several; categories are folder labels, not
+                // the source name.
+                showFeedName ? view.feedTitle : null,
                 a.author,
                 view.categories,
                 view.words ? _('{{count}} words', { count: view.words.toLocaleString() }) : null,
@@ -435,6 +471,9 @@ export const ArticleList = () => {
   const currentStreamId = useFeedsStore((s) => s.currentStreamId);
   const currentTitle = useFeedsStore((s) => s.currentTitle);
   const openStream = useFeedsStore((s) => s.openStream);
+  const lastOpenedArticleId = useFeedsStore((s) => s.lastOpenedArticleId);
+  const openArticles = useFeedsStore((s) => s.openArticles);
+  const hydrateOpenArticles = useFeedsStore((s) => s.hydrateOpenArticles);
   const openFeedArticle = useOpenFeedArticle();
   const [opening, setOpening] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -462,7 +501,8 @@ export const ArticleList = () => {
   // Derived per-article data, computed once per queue change (see ArticleView).
   const views = useMemo(() => {
     const map = new Map<string, ArticleView>();
-    for (const a of articles) map.set(a.id, deriveView(a));
+    const now = Date.now();
+    for (const a of articles) map.set(a.id, deriveView(a, now));
     return map;
   }, [articles]);
 
@@ -482,6 +522,33 @@ export const ArticleList = () => {
       setSelectedId(visible[0]?.id ?? null);
     }
   }, [visible, selectedId]);
+
+  // Returning from an article remounts this list, which reappeared scrolled to
+  // the top. Put the reader back where they were: scroll the article they just
+  // came out of into view and select it. Runs once per mount.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || !lastOpenedArticleId) return;
+    const row = rowRefs.current.get(lastOpenedArticleId);
+    if (!row) return; // that article has left the queue (marked read)
+    restoredRef.current = true;
+    setSelectedId(lastOpenedArticleId);
+    row.scrollIntoView?.({ block: 'center' });
+  }, [lastOpenedArticleId, visible]);
+
+  // Articles already opened at least once, so the list can distinguish
+  // "looked at it, came back" from untouched. Opening does NOT mark read.
+  useEffect(() => {
+    hydrateOpenArticles();
+  }, [hydrateOpenArticles]);
+  // Only worth the byline space when the queue actually spans feeds (a folder
+  // or the aggregate stream); inside a single feed it's the same name on every
+  // row.
+  const showFeedName = useMemo(() => new Set(articles.map((a) => a.feedId)).size > 1, [articles]);
+  const openedIds = useMemo(
+    () => new Set(Object.values(openArticles).map((v) => v.greaderId)),
+    [openArticles],
+  );
 
   const selectedIndex = visible.findIndex((a) => a.id === selectedId);
 
@@ -653,8 +720,24 @@ export const ArticleList = () => {
       </div>
     );
   }
-  if (error) {
-    return <div className='text-error p-6 text-sm'>{error}</div>;
+  // Only take over the screen when there is nothing to take over FROM. A failed
+  // "Load more" used to throw away a 40-article queue (and any pending undo)
+  // and leave a bare error string with no way back.
+  if (error && articles.length === 0) {
+    return (
+      <div className='p-6 text-center text-sm'>
+        <p className='text-error'>{error}</p>
+        <button
+          type='button'
+          onClick={() =>
+            fr && currentStreamId && void openStream(fr, currentStreamId, currentTitle)
+          }
+          className='btn btn-ghost btn-sm text-primary mt-3 min-h-11'
+        >
+          {_('Retry')}
+        </button>
+      </div>
+    );
   }
   if (articles.length === 0) {
     return <div className='text-base-content/60 p-8 text-center text-sm'>{_('Queue clear ✓')}</div>;
@@ -691,6 +774,18 @@ export const ArticleList = () => {
           </button>
         </div>
       )}
+      {error && (
+        <div className='border-base-200 bg-error/10 flex items-center gap-2 border-b px-4 py-2 text-[15px]'>
+          <span className='text-error min-w-0 flex-1 truncate'>{error}</span>
+          <button
+            type='button'
+            onClick={() => fr && void loadMore(fr)}
+            className='btn btn-ghost btn-sm text-primary min-h-11'
+          >
+            {_('Retry')}
+          </button>
+        </div>
+      )}
       {visible.length === 0 && (
         <div className='text-base-content/60 p-8 text-center text-sm'>{_('No matches')}</div>
       )}
@@ -699,12 +794,14 @@ export const ArticleList = () => {
           <ArticleRow
             key={a.id}
             article={a}
-            view={views.get(a.id) ?? deriveView(a)}
+            view={views.get(a.id)!}
             expanded={expandedId === a.id}
             selected={a.id === selectedId}
             opening={opening === a.id}
             summarizing={summarizing.has(a.id)}
             noAdd={noAdd.has(a.id)}
+            visited={openedIds.has(a.id)}
+            showFeedName={showFeedName}
             summary={summaries[a.id]}
             onTitleClick={onTitleClick}
             onOpen={onOpen}
