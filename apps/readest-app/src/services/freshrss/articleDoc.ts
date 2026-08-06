@@ -4,6 +4,15 @@ import { htmlToBook } from '@/services/send/conversion/convertToEpub';
 import { bundleAssets } from '@/services/send/conversion/assetBundler';
 import { generateCoverSvg } from '@/services/send/conversion/coverGenerator';
 
+/**
+ * Blank block appended after every article so the floating Done / Obsidian
+ * buttons never sit over the text. Styled by `.rss-tail` in buildEpub.
+ *
+ * Must be a `<p>` carrying a non-breaking space: the sanitizer strips `<div>`
+ * entirely, and an element with no content can be dropped as empty.
+ */
+export const ARTICLE_TAIL = '<p class="rss-tail"> </p>';
+
 /** How long the decorative favicon may hold up opening an article. */
 const FAVICON_TIMEOUT_MS = 4000;
 /** Overall budget for fetching+embedding the article's images. */
@@ -145,7 +154,13 @@ export async function articleToFile(article: FreshRSSArticle): Promise<File> {
     article.contentHtml?.trim() || `<p>${escapeHtml(article.title || '')}</p>`,
   );
   const readMinutes = estimateReadMinutes(rawBody);
-  const body = buildMasthead(article, readMinutes) + rawBody;
+  // The trailing spacer is what actually keeps the floating Done/Obsidian
+  // buttons off the closing lines — see the .rss-tail rule in buildEpub. The
+  // buttons are fixed overlays outside the viewer iframe, so the clearance has
+  // to be part of the DOCUMENT; asking foliate for a bottom margin does
+  // nothing in scrolled horizontal mode. `<p>` (not `<div>`) because the
+  // sanitizer drops divs.
+  const body = buildMasthead(article, readMinutes) + rawBody + ARTICLE_TAIL;
   // useProxy routes the cross-origin image fetches through /api/img on web; on
   // Tauri the bundler hits the network directly (no CORS), ignoring the flag.
   //

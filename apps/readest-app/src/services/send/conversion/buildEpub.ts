@@ -51,6 +51,15 @@ img { max-width: 100%; height: auto; }
 .rss-source a { color: inherit; text-decoration: none; vertical-align: middle; }
 /* Byline (author · date · read time): quiet metadata under the headline. */
 .rss-byline { font-size: 0.9em; color: #555; margin: 0.2em 0 0.4em; }
+/* FORK: trailing spacer so the floating Done / Obsidian buttons — fixed
+   overlays OUTSIDE this iframe — cannot cover the last lines of an article.
+   It has to live in the DOCUMENT: foliate's scrolled() layout applies
+   marginBottom as padding only in VERTICAL writing mode (paginator.js:725),
+   so a bottom margin does nothing for an ordinary horizontal article. A <p>
+   is used because the sanitizer strips <div> (verified); the sizing is
+   !important because the reader injects its own paragraph layout rules. */
+.rss-tail { height: 160px !important; margin: 0 !important; padding: 0 !important;
+  line-height: 160px !important; }
 figure { margin: 1em 0; }
 figcaption { font-size: 0.9em; color: #666; text-align: center; }
 blockquote { margin: 1em 1.5em; color: #444; border-left: 3px solid #ccc; padding-left: 1em; }
